@@ -39,5 +39,6 @@ def generate(prompt: str, height: int, width: int, steps: int, seed: int):
         ).images[0]
 
     torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
 
     return img

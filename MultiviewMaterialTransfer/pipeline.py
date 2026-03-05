@@ -25,6 +25,10 @@ def infer(
     orbit_axis: Optional[Tuple[float, float, float]] = None,
 ):
     pipe = get_pipeline()
+
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
     autocast_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
     autocast_device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -46,5 +50,5 @@ def infer(
     obj = frames[2]
 
     torch.cuda.empty_cache()
-    
+
     return reference, preds, obj
