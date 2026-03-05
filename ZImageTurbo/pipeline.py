@@ -21,7 +21,6 @@ def get_pipe():
         _pipe.to(_device)
         # _pipe.enable_model_cpu_offload()
         _pipe.enable_attention_slicing()
-        _pipe.enable_vae_slicing()
 
     return _pipe
 
