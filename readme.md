@@ -54,6 +54,13 @@ source .venv/bin/activate
 pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
 ```
 
+- For rtx 5090 gpus run this instead:
+
+```bash
+pip install --pre --index-url https://download.pytorch.org/whl/nightly/cu128 \
+  torch torchvision torchaudio
+```
+
 ```bash
 pip install -r requirements.txt
 ```
