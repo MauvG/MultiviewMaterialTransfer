@@ -28,19 +28,23 @@ def infer(
     autocast_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
     autocast_device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    with torch.autocast(device_type=autocast_device, dtype=autocast_dtype):
-        samples = pipe.infer_demo(
-            input_image_path=input_image_path,
-            reference_image_path=reference_image_path,
-            elevation=elevation,
-            distance=distance,
-            fov=fov,
-            num_inference_steps=num_inference_steps,
-            orbit_axis=orbit_axis,
-        )
+    with torch.no_grad():
+        with torch.autocast(device_type=autocast_device, dtype=autocast_dtype):
+            samples = pipe.infer_demo(
+                input_image_path=input_image_path,
+                reference_image_path=reference_image_path,
+                elevation=elevation,
+                distance=distance,
+                fov=fov,
+                num_inference_steps=num_inference_steps,
+                orbit_axis=orbit_axis,
+            )
 
     frames = [f[1:] for f in samples]
     reference = frames[0]
     preds = frames[1]
     obj = frames[2]
+
+    torch.cuda.empty_cache()
+    
     return reference, preds, obj

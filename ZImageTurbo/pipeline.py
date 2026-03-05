@@ -19,19 +19,26 @@ def get_pipe():
             low_cpu_mem_usage=True,
         )
         _pipe.to(_device)
-        _pipe.enable_model_cpu_offload()
+        # _pipe.enable_model_cpu_offload()
+        _pipe.enable_attention_slicing()
+        _pipe.enable_vae_slicing()
 
     return _pipe
 
 def generate(prompt: str, height: int, width: int, steps: int, seed: int):
     pipe = get_pipe()
     g = torch.Generator(_device).manual_seed(seed)
-    img = pipe(
-        prompt=prompt + promptSuffix,
-        height=height,
-        width=width,
-        num_inference_steps=steps,
-        guidance_scale=0.0,
-        generator=g,
-    ).images[0]
+
+    with torch.no_grad():
+        img = pipe(
+            prompt=prompt + promptSuffix,
+            height=height,
+            width=width,
+            num_inference_steps=steps,
+            guidance_scale=0.0,
+            generator=g,
+        ).images[0]
+
+    torch.cuda.empty_cache()
+
     return img
