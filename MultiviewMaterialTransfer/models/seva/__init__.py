@@ -29,13 +29,13 @@ from .utils import (
 
 C = 4
 T = 22
-# H = 576
-# W = 576
+H = 576
+W = 576
 F = 8
 B = 3
 
-H = 256
-W = 256
+# H = 256
+# W = 256
 
 def load_pipeline(
     device="cuda",

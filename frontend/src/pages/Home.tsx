@@ -371,7 +371,7 @@ export default function Home() {
       form.append("elevation", "10");
       form.append("distance", "2.0");
       form.append("fov", "0.7");
-      form.append("steps", "40");
+      form.append("steps", "50");
       form.append("max_frames", "21");
 
       const useOrbit = orbit ?? orbitConfirmed ?? null;
