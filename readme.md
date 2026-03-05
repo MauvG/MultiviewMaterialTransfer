@@ -46,7 +46,13 @@ source .venv/bin/activate
 
 ---
 
-# 3. Install Python Dependencies
+# 3. Install Dependencies
+
+- Install torch first (important)
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
+```
 
 ```bash
 pip install -r requirements.txt
