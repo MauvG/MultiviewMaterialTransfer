@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+dist-ssr/
 
 .venv/
 venv/
@@ -12,11 +13,14 @@ env/
 
 node_modules/
 .vite/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-/models/
+models/
 *.safetensors
 *.ckpt
 *.bin
@@ -30,7 +34,16 @@ MultiviewMaterialTransfer/demo_cache/
 **/.cache/
 .huggingface/
 
-.vscode/
+*.local
+
+.vscode/*
+!.vscode/extensions.json
 .idea/
 .DS_Store
 Thumbs.db
+
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
