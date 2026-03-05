@@ -79,6 +79,12 @@ The **SEVA model weights** are not included in the repository.
 1. Download **`model.safetensors`** from:
    https://huggingface.co/stabilityai/stable-virtual-camera/tree/main
 
+or run command:
+
+```bash
+hf download stabilityai/stable-virtual-camera model.safetensors
+```
+
 2. Create a folder named `models` in the project root:
 
 ```bash
