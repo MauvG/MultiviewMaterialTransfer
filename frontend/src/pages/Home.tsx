@@ -14,14 +14,14 @@ type MVResponse = {
   reference_url?: string;
   obj_frames?: string[];
   pred_frames?: string[];
-  frames?: string[]; // legacy (pred)
+  frames?: string[];
 };
 
 type Vec3 = [number, number, number];
 
 type OrbitSpec = {
-  tiltDeg: number; // fixed at 90
-  headingDeg: number; // user controls
+  tiltDeg: number;
+  headingDeg: number;
   axis: Vec3;
 };
 
@@ -60,14 +60,11 @@ function cross(a: Vec3, b: Vec3): Vec3 {
 }
 
 function orbitFromHeadingDeg(headingDeg: number): OrbitSpec {
-  // backend uses up_direction = [0, -1, 0]
   const up: Vec3 = [0, -1, 0];
 
-  // heading direction on ground plane (XZ)
   const a = deg2rad(headingDeg);
   const h: Vec3 = norm3([Math.cos(a), 0, Math.sin(a)]);
 
-  // axis = up × h
   const axis: Vec3 = norm3(cross(up, h));
 
   return { tiltDeg: 90, headingDeg, axis };
@@ -82,17 +79,12 @@ function headingDegFromMouse(
   const dx = clientX - cx;
   const dy = clientY - cy;
 
-  // CSS rotate() uses screen coords (y down), so this points correctly at the mouse
   const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
 
-  // normalize to [0, 360)
   return (deg + 360) % 360;
 }
 
 export default function Home() {
-  // -------------------------
-  // Theme (light/dark)
-  // -------------------------
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window === "undefined") return "dark";
     const saved = window.localStorage.getItem("theme");
@@ -143,7 +135,6 @@ export default function Home() {
   const [autoSpin, setAutoSpin] = useState(false);
   const [running, setRunning] = useState(false);
 
-  // Orbit selection (RMB drag)
   const [orbitDraft, setOrbitDraft] = useState<OrbitSpec | null>(null);
   const [orbitConfirmed, setOrbitConfirmed] = useState<OrbitSpec | null>(null);
 
@@ -232,7 +223,6 @@ export default function Home() {
     setReference(item.src, item.id);
   };
 
-  // LMB rotate frames
   const beginDrag = (clientX: number, pointerId: number) => {
     if (!hasFrames) return;
     const el = viewportRef.current;
@@ -293,7 +283,6 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFrames, frameIndex, frameCount]);
 
   useEffect(() => {
@@ -412,7 +401,6 @@ export default function Home() {
 
     orbitDrag.current = { active: true, cx, cy };
 
-    // set initial arrow direction immediately
     const h0 = headingDegFromMouse(clientX, clientY, cx, cy);
     setOrbitDraft(orbitFromHeadingDeg(h0));
 
@@ -437,7 +425,6 @@ export default function Home() {
   };
 
   const onNew = () => {
-    // Clear current session so user can upload a new object
     setObjectImage(null);
     setReferenceImage(null);
     setActiveRefId("none");
@@ -448,7 +435,6 @@ export default function Home() {
     resetOutputs();
     setRunning(false);
 
-    // allow selecting the same file again
     if (objInputRef.current) objInputRef.current.value = "";
   };
 
@@ -487,7 +473,6 @@ export default function Home() {
     }
   };
 
-  // reference strip scroll
   const updateRefScroll01 = () => {
     const el = refStripRef.current;
     if (!el) return;
@@ -497,7 +482,6 @@ export default function Home() {
 
   useEffect(() => {
     updateRefScroll01();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs.length]);
 
   const onRefScrollbarChange = (v01: number) => {
@@ -601,7 +585,6 @@ export default function Home() {
               return;
             }
 
-            // LMB frame rotation
             if (e.button === 0 && hasFrames) {
               (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
               beginDrag(e.clientX, e.pointerId);
@@ -681,7 +664,7 @@ export default function Home() {
               {orbitDraft && (
                 <div className="pointer-events-none absolute inset-0 grid place-items-center z-20">
                   {(() => {
-                    const size = 600; // <- make bigger here
+                    const size = 600;
                     const r = size / 2;
 
                     return (
@@ -689,10 +672,7 @@ export default function Home() {
                         className="relative"
                         style={{ width: size, height: size }}
                       >
-                        {/* orbit ring */}
                         {/* <div className="absolute inset-0 rounded-full border-2 border-[color:var(--orbit)]" /> */}
-
-                        {/* heading diameter line */}
                         <div
                           className="absolute left-1/2 top-1/2 h-[2px] bg-[var(--orbit)] origin-center"
                           style={{
