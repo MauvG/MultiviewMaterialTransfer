@@ -48,19 +48,20 @@ source .venv/bin/activate
 
 # 3. Install Dependencies
 
-- Install torch first (important)
-
+- For rtx 5090 gpus run:
 ```bash
-pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
+pip install -r requirements.txt
 ```
-
-- For rtx 5090 gpus run this instead:
-
 ```bash
 pip install --pre --index-url https://download.pytorch.org/whl/nightly/cu128 \
   torch torchvision torchaudio
 ```
 
+- For other gpus install torch first:
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121
+```
 ```bash
 pip install -r requirements.txt
 ```
@@ -87,6 +88,9 @@ The **SEVA model weights** are not included in the repository.
    https://huggingface.co/stabilityai/stable-virtual-camera/tree/main
 
 or run command:
+```bash
+hf auth login
+```
 
 ```bash
 hf download stabilityai/stable-virtual-camera model.safetensors
@@ -102,6 +106,10 @@ mkdir models
 
 ```
 models/seva_model.safetensors
+```
+
+```bash
+cp PATH_TO_MODEL PATH_TO_FOLDER
 ```
 
 The final structure should look like:
