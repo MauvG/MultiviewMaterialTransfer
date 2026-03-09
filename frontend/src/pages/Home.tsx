@@ -369,25 +369,24 @@ export default function Home() {
   }, [centerBoxSize]);
 
   const centerBoxWrapRef = useRef<HTMLDivElement | null>(null);
-  const [centerBoxBottomPx, setCenterBoxBottomPx] = useState<number | null>(
-    null,
-  );
+  const [sliderTopPx, setSliderTopPx] = useState<number | null>(null);
 
   useEffect(() => {
     const update = () => {
       const viewportEl = viewportRef.current;
       const boxEl = centerBoxWrapRef.current;
       if (!viewportEl || !boxEl) {
-        setCenterBoxBottomPx(null);
+        setSliderTopPx(null);
         return;
       }
 
       const viewportRect = viewportEl.getBoundingClientRect();
       const boxRect = boxEl.getBoundingClientRect();
 
-      setCenterBoxBottomPx(
-        Math.max(16, Math.round(viewportRect.bottom - boxRect.bottom + 14)),
-      );
+      const boxBottomInsideViewport = boxRect.bottom - viewportRect.top;
+      const gapBelowBox = 12;
+
+      setSliderTopPx(Math.round(boxBottomInsideViewport + gapBelowBox));
     };
 
     update();
@@ -493,7 +492,7 @@ export default function Home() {
       form.append("elevation", "10");
       form.append("distance", "2.0");
       form.append("fov", "0.7");
-      form.append("steps", "50");
+      form.append("steps", "25");
       form.append("max_frames", "21");
 
       const useOrbit = orbit ?? orbitConfirmed ?? null;
@@ -878,16 +877,16 @@ export default function Home() {
             </div>
           )}
 
-          {hasFrames && (
+          {hasFrames && sliderTopPx !== null && (
             <div
               className="absolute left-4 right-4"
-              style={{ bottom: centerBoxBottomPx ?? 20 }}
+              style={{ top: sliderTopPx }}
               onPointerDownCapture={(e) => e.stopPropagation()}
               onPointerMoveCapture={(e) => e.stopPropagation()}
               onPointerUpCapture={(e) => e.stopPropagation()}
               onWheelCapture={(e) => e.stopPropagation()}
             >
-              <div className="mx-auto w-full max-w-[min(900px,calc(100%-32px))] rounded-full border border-[color:var(--border)] bg-[var(--surface)] backdrop-blur px-3 py-2 shadow-sm">
+              <div className="mx-auto w-full max-w-[900px] rounded-full border border-[color:var(--border)] bg-[var(--surface)] backdrop-blur px-3 py-2 shadow-sm">
                 <input
                   disabled={!hasFrames}
                   type="range"
