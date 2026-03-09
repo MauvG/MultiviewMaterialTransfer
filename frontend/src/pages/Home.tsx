@@ -145,10 +145,6 @@ export default function Home() {
   const objInputRef = useRef<HTMLInputElement | null>(null);
   const refUploadInputRef = useRef<HTMLInputElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-
-  const bottomPanelRef = useRef<HTMLDivElement | null>(null);
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(0);
 
   const refStripRef = useRef<HTMLDivElement | null>(null);
   const [refScroll01, setRefScroll01] = useState(0);
@@ -303,134 +299,6 @@ export default function Home() {
     return () => cancelAnimationFrame(raf);
   }, [autoSpin, hasFrames]);
 
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-
-    const update = () => {
-      const rect = el.getBoundingClientRect();
-      setViewportSize({
-        width: rect.width,
-        height: rect.height,
-      });
-    };
-
-    update();
-
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    window.addEventListener("resize", update);
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-
-  const centerBoxSize = useMemo(() => {
-    const aspect = 16 / 10;
-
-    const outerX =
-      viewportSize.width < 640 ? 16 : viewportSize.width < 1024 ? 24 : 32;
-    const topClearance = orbitDraft ? 104 : 36;
-    const bottomClearance = hasFrames ? 96 : 36;
-
-    const usableW = Math.max(0, viewportSize.width - outerX * 2);
-    const usableH = Math.max(
-      0,
-      viewportSize.height - topClearance - bottomClearance,
-    );
-
-    // Keep more breathing room than before
-    const widthByHeight = usableH * aspect;
-    const fittedWidth = Math.min(usableW, widthByHeight);
-
-    const scale =
-      viewportSize.width < 640
-        ? 0.8
-        : viewportSize.width < 900
-          ? 0.84
-          : viewportSize.width < 1280
-            ? 0.88
-            : 0.9;
-
-    const width = fittedWidth * scale;
-    const height = width / aspect;
-
-    return {
-      width: Math.floor(width),
-      height: Math.floor(height),
-    };
-  }, [viewportSize, hasFrames, orbitDraft]);
-
-  const orbitOverlaySize = useMemo(() => {
-    const base = Math.min(centerBoxSize.width, centerBoxSize.height) * 0.78;
-    return Math.max(140, Math.min(460, Math.floor(base)));
-  }, [centerBoxSize]);
-
-  const centerBoxWrapRef = useRef<HTMLDivElement | null>(null);
-  const [sliderTopPx, setSliderTopPx] = useState<number | null>(null);
-
-  useEffect(() => {
-    const update = () => {
-      const viewportEl = viewportRef.current;
-      const boxEl = centerBoxWrapRef.current;
-      if (!viewportEl || !boxEl) {
-        setSliderTopPx(null);
-        return;
-      }
-
-      const viewportRect = viewportEl.getBoundingClientRect();
-      const boxRect = boxEl.getBoundingClientRect();
-
-      const boxBottomInsideViewport = boxRect.bottom - viewportRect.top;
-      const gapBelowBox = 12;
-
-      setSliderTopPx(Math.round(boxBottomInsideViewport + gapBelowBox));
-    };
-
-    update();
-
-    const ro = new ResizeObserver(update);
-    if (viewportRef.current) ro.observe(viewportRef.current);
-    if (centerBoxWrapRef.current) ro.observe(centerBoxWrapRef.current);
-
-    window.addEventListener("resize", update);
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, [
-    centerBoxSize.width,
-    centerBoxSize.height,
-    hasFrames,
-    orbitDraft,
-    currentFrame,
-    objectImage,
-  ]);
-
-  useEffect(() => {
-    const el = bottomPanelRef.current;
-    if (!el) return;
-
-    const update = () => {
-      const rect = el.getBoundingClientRect();
-      setBottomPanelHeight(rect.height);
-    };
-
-    update();
-
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    window.addEventListener("resize", update);
-
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, []);
-
   const generateReference = async () => {
     if (!refPrompt.trim()) return;
     setGeneratingRef(true);
@@ -492,7 +360,7 @@ export default function Home() {
       form.append("elevation", "10");
       form.append("distance", "2.0");
       form.append("fov", "0.7");
-      form.append("steps", "25");
+      form.append("steps", "50");
       form.append("max_frames", "21");
 
       const useOrbit = orbit ?? orbitConfirmed ?? null;
@@ -631,12 +499,14 @@ export default function Home() {
   })();
 
   return (
-    <div className="h-dvh w-screen bg-[var(--app-bg)] text-[color:var(--app-fg)] flex flex-col overflow-hidden transition-colors duration-200">
+    <div className="h-screen w-screen bg-[var(--app-bg)] text-[color:var(--app-fg)] flex flex-col overflow-hidden transition-colors duration-200">
+      {/* Top bar */}
       <div className="h-14 border-b border-[color:var(--border)] bg-[var(--panel-bg)] backdrop-blur px-4 flex items-center gap-2">
         <div className="text-sm font-semibold tracking-tight">
           Material Transfer Studio
         </div>
 
+        {/* NEW: Top-left actions */}
         <div className="ml-3 flex items-center gap-2">
           <button
             type="button"
@@ -663,6 +533,7 @@ export default function Home() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Theme toggle */}
           <button
             type="button"
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
@@ -701,6 +572,7 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Viewport */}
       <div className="flex-1 relative">
         <div
           ref={viewportRef}
@@ -733,6 +605,7 @@ export default function Home() {
             stepFrame(e.deltaY > 0 ? 1 : -1);
           }}
         >
+          {/* subtle grid */}
           <div className="pointer-events-none absolute inset-0 opacity-[0.20]">
             <div
               className="absolute inset-0"
@@ -751,59 +624,53 @@ export default function Home() {
             />
           </div>
 
-          <div className="absolute inset-0 grid place-items-center px-3 py-4 sm:px-5 sm:py-5 md:px-7 md:py-6">
-            <div
-              ref={centerBoxWrapRef}
-              style={{
-                width: centerBoxSize.width || undefined,
-                height: centerBoxSize.height || undefined,
-              }}
-              className="relative max-w-full max-h-full"
-            >
+          {/* Center box + scrub bar */}
+          <div className="absolute inset-0 flex items-center justify-center p-4 sm:p-6 md:p-8 min-h-0">
+            <div className="flex h-full w-full max-w-[1280px] flex-col items-center justify-center gap-4 min-h-0 min-w-0">
               <button
                 type="button"
                 onClick={() => {
                   if (!hasFrames) pickObject();
                 }}
                 className={[
-                  "w-full h-full",
-                  "rounded-2xl border border-[color:var(--border)] bg-[var(--centerbox-bg)] overflow-hidden",
-                  "relative",
-                  "grid place-items-center",
+                  "relative shrink min-h-0 min-w-0 overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[var(--centerbox-bg)]",
+                  "w-full max-w-[1200px] flex-1",
                   objectImage || hasFrames
                     ? "cursor-default"
                     : "cursor-pointer hover:border-[color:var(--border-strong)] transition",
                 ].join(" ")}
               >
-                {currentFrame ? (
-                  <img
-                    src={currentFrame}
-                    alt="frame"
-                    className="w-full h-full object-contain object-center overflow-hidden grid place-items-center p-4"
-                    draggable={false}
-                  />
-                ) : objectImage ? (
-                  <img
-                    src={objectImage}
-                    alt="object"
-                    className="w-full h-full object-contain object-center overflow-hidden grid place-items-center p-4"
-                    draggable={false}
-                  />
-                ) : (
-                  <div className="text-[color:var(--muted2)] text-sm">
-                    Upload image
-                  </div>
-                )}
+                <div className="absolute inset-0 flex items-center justify-center p-4 sm:p-5 md:p-6 min-h-0 min-w-0">
+                  {currentFrame ? (
+                    <img
+                      src={currentFrame}
+                      alt="frame"
+                      className="block max-h-full max-w-full object-contain"
+                      draggable={false}
+                    />
+                  ) : objectImage ? (
+                    <img
+                      src={objectImage}
+                      alt="object"
+                      className="block max-h-full max-w-full object-contain"
+                      draggable={false}
+                    />
+                  ) : (
+                    <div className="text-[color:var(--muted2)] text-sm">
+                      Upload image
+                    </div>
+                  )}
+                </div>
 
                 {orbitDraft && (
                   <div className="pointer-events-none absolute inset-0 grid place-items-center z-20">
                     {(() => {
-                      const size = orbitOverlaySize;
+                      const size = 600;
                       const r = size / 2;
 
                       return (
                         <div
-                          className="relative"
+                          className="relative max-w-full max-h-full"
                           style={{ width: size, height: size }}
                         >
                           <div
@@ -830,9 +697,35 @@ export default function Home() {
                   </div>
                 )}
               </button>
+
+              {/* frame scrub bar */}
+              <div
+                className="w-full max-w-[900px] shrink-0"
+                onPointerDownCapture={(e) => e.stopPropagation()}
+                onPointerMoveCapture={(e) => e.stopPropagation()}
+                onPointerUpCapture={(e) => e.stopPropagation()}
+                onWheelCapture={(e) => e.stopPropagation()}
+              >
+                <div className="rounded-full border border-[color:var(--border)] bg-[var(--surface)] backdrop-blur px-3 py-2">
+                  <input
+                    disabled={!hasFrames}
+                    type="range"
+                    min={0}
+                    max={Math.max(0, frameCount - 1)}
+                    step={1}
+                    value={frameIndex}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setYaw01(frameCount <= 1 ? 0 : v / (frameCount - 1));
+                    }}
+                    className="w-full accent-[var(--accent)] disabled:opacity-40"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
+          {/* Orbit confirm panel */}
           {orbitDraft && (
             <div
               className="absolute top-4 left-1/2 -translate-x-1/2 rounded-2xl border border-[color:var(--border)] bg-[var(--panel-strong)] backdrop-blur px-4 py-3 text-sm z-50"
@@ -877,33 +770,6 @@ export default function Home() {
             </div>
           )}
 
-          {hasFrames && sliderTopPx !== null && (
-            <div
-              className="absolute left-4 right-4"
-              style={{ top: sliderTopPx }}
-              onPointerDownCapture={(e) => e.stopPropagation()}
-              onPointerMoveCapture={(e) => e.stopPropagation()}
-              onPointerUpCapture={(e) => e.stopPropagation()}
-              onWheelCapture={(e) => e.stopPropagation()}
-            >
-              <div className="mx-auto w-full max-w-[900px] rounded-full border border-[color:var(--border)] bg-[var(--surface)] backdrop-blur px-3 py-2 shadow-sm">
-                <input
-                  disabled={!hasFrames}
-                  type="range"
-                  min={0}
-                  max={Math.max(0, frameCount - 1)}
-                  step={1}
-                  value={frameIndex}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setYaw01(frameCount <= 1 ? 0 : v / (frameCount - 1));
-                  }}
-                  className="w-full accent-[var(--accent)] disabled:opacity-40"
-                />
-              </div>
-            </div>
-          )}
-
           {running && (
             <div className="absolute inset-0 bg-[var(--overlay-bg)] grid place-items-center">
               <div className="rounded-2xl border border-[color:var(--border)] bg-[var(--toast-bg)] backdrop-blur px-4 py-3 text-sm text-[color:var(--muted2)]">
@@ -922,10 +788,8 @@ export default function Home() {
         />
       </div>
 
-      <div
-        ref={bottomPanelRef}
-        className="border-t border-[color:var(--border)] bg-[var(--panel-bg)] backdrop-blur px-4 py-3"
-      >
+      {/* Bottom panel */}
+      <div className="border-t border-[color:var(--border)] bg-[var(--panel-bg)] backdrop-blur px-4 py-3">
         <div className="mx-auto max-w-[1400px] flex items-center gap-2">
           <input
             value={refPrompt}
@@ -1039,6 +903,7 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Theme tokens */}
       <style>{`
         :root[data-theme="dark"]{
           color-scheme: dark;
