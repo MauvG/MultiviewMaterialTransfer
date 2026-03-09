@@ -19,9 +19,17 @@ type MVResponse = {
 
 type Vec3 = [number, number, number];
 
+type OrbitAxis = "x" | "y" | "z";
+
+type Quat = [number, number, number, number];
+
 type OrbitSpec = {
   tiltDeg: number;
   headingDeg: number;
+  yawDeg: number;
+  pitchDeg: number;
+  rollDeg: number;
+  quat: Quat;
   axis: Vec3;
 };
 
@@ -45,11 +53,7 @@ function pathToId(p: string) {
 
 const deg2rad = (d: number) => (d * Math.PI) / 180;
 
-function norm3(v: Vec3): Vec3 {
-  const n = Math.hypot(v[0], v[1], v[2]);
-  if (n < 1e-8) return [0, -1, 0];
-  return [v[0] / n, v[1] / n, v[2] / n];
-}
+const IDENTITY_QUAT: Quat = [0, 0, 0, 1];
 
 function cross(a: Vec3, b: Vec3): Vec3 {
   return [
@@ -59,29 +63,97 @@ function cross(a: Vec3, b: Vec3): Vec3 {
   ];
 }
 
-function orbitFromHeadingDeg(headingDeg: number): OrbitSpec {
-  const up: Vec3 = [0, -1, 0];
-
-  const a = deg2rad(headingDeg);
-  const h: Vec3 = norm3([Math.cos(a), 0, Math.sin(a)]);
-
-  const axis: Vec3 = norm3(cross(up, h));
-
-  return { tiltDeg: 90, headingDeg, axis };
+function quatNormalize(q: Quat): Quat {
+  const n = Math.hypot(q[0], q[1], q[2], q[3]);
+  if (n < 1e-8) return IDENTITY_QUAT;
+  return [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
 }
 
-function headingDegFromMouse(
-  clientX: number,
-  clientY: number,
-  cx: number,
-  cy: number,
-) {
-  const dx = clientX - cx;
-  const dy = clientY - cy;
+function quatMul(a: Quat, b: Quat): Quat {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return quatNormalize([
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ]);
+}
 
-  const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+function quatFromAxisAngle(axis: Vec3, deg: number): Quat {
+  const n = norm3(axis);
+  const h = deg2rad(deg) * 0.5;
+  const s = Math.sin(h);
+  return quatNormalize([n[0] * s, n[1] * s, n[2] * s, Math.cos(h)]);
+}
 
-  return (deg + 360) % 360;
+function quatRotateVec(q: Quat, v: Vec3): Vec3 {
+  const qv: Vec3 = [q[0], q[1], q[2]];
+  const uv = cross(qv, v);
+  const uuv = cross(qv, uv);
+  return [
+    v[0] + 2 * (q[3] * uv[0] + uuv[0]),
+    v[1] + 2 * (q[3] * uv[1] + uuv[1]),
+    v[2] + 2 * (q[3] * uv[2] + uuv[2]),
+  ];
+}
+
+function quatToAxisAngle(q: Quat): { axis: Vec3; deg: number } {
+  const n = quatNormalize(q);
+  const w = Math.max(-1, Math.min(1, n[3]));
+  const angle = 2 * Math.acos(w);
+  const s = Math.sqrt(Math.max(0, 1 - w * w));
+
+  if (s < 1e-6 || angle < 1e-6) {
+    return { axis: [0, 1, 0], deg: 0 };
+  }
+
+  return {
+    axis: [n[0] / s, n[1] / s, n[2] / s],
+    deg: (angle * 180) / Math.PI,
+  };
+}
+
+function orbitFromQuat(
+  quat: Quat,
+  yawDeg: number = 0,
+  pitchDeg: number = 0,
+  rollDeg: number = 0,
+): OrbitSpec {
+  const q = quatNormalize(quat);
+  const axis = norm3(quatRotateVec(q, [0, 0, 1]));
+
+  return {
+    tiltDeg: 90,
+    headingDeg: wrapDeg(yawDeg),
+    yawDeg: wrapDeg(yawDeg),
+    pitchDeg: wrapDeg(pitchDeg),
+    rollDeg: wrapDeg(rollDeg),
+    quat: q,
+    axis,
+  };
+}
+
+function orbitFromAngles(
+  yawDeg: number,
+  pitchDeg: number,
+  rollDeg: number = 0,
+): OrbitSpec {
+  const qy = quatFromAxisAngle([0, 1, 0], yawDeg);
+  const qx = quatFromAxisAngle([1, 0, 0], pitchDeg);
+  const qz = quatFromAxisAngle([0, 0, 1], rollDeg);
+
+  return orbitFromQuat(quatMul(quatMul(qy, qx), qz), yawDeg, pitchDeg, rollDeg);
+}
+
+function wrapDeg(d: number) {
+  return ((d % 360) + 360) % 360;
+}
+
+function norm3(v: Vec3): Vec3 {
+  const n = Math.hypot(v[0], v[1], v[2]);
+  if (n < 1e-8) return [0, -1, 0];
+  return [v[0] / n, v[1] / n, v[2] / n];
 }
 
 export default function Home() {
@@ -138,8 +210,23 @@ export default function Home() {
   const [orbitDraft, setOrbitDraft] = useState<OrbitSpec | null>(null);
   const [orbitConfirmed, setOrbitConfirmed] = useState<OrbitSpec | null>(null);
 
-  const orbitDrag = useRef<{ active: boolean; cx: number; cy: number } | null>(
+  const orbitDrag = useRef<{
+    active: boolean;
+    axis: OrbitAxis;
+    lastX: number;
+    lastY: number;
+    centerX: number;
+    centerY: number;
+    quat: Quat;
+  } | null>(null);
+
+  const [activeOrbitAxis, setActiveOrbitAxis] = useState<OrbitAxis | null>(
     null,
+  );
+
+  const displayOrbit = useMemo(
+    () => orbitDraft ?? orbitConfirmed ?? orbitFromAngles(0, 0, 0),
+    [orbitDraft, orbitConfirmed],
   );
 
   const objInputRef = useRef<HTMLInputElement | null>(null);
@@ -278,6 +365,10 @@ export default function Home() {
       }
       if (e.key === "Escape") {
         setOrbitDraft(null);
+        setActiveOrbitAxis(null);
+        if (orbitDrag.current) {
+          orbitDrag.current.active = false;
+        }
         orbitDrag.current = null;
       }
     };
@@ -363,7 +454,8 @@ export default function Home() {
       form.append("steps", "50");
       form.append("max_frames", "21");
 
-      const useOrbit = orbit ?? orbitConfirmed ?? null;
+      const useOrbit =
+        orbit ?? orbitDraft ?? orbitConfirmed ?? orbitFromAngles(0, 0, 0);
       if (useOrbit) {
         form.append("orbit_axis_x", String(useOrbit.axis[0]));
         form.append("orbit_axis_y", String(useOrbit.axis[1]));
@@ -391,29 +483,68 @@ export default function Home() {
     }
   };
 
-  const startOrbitDrag = (clientX: number, clientY: number) => {
+  const startAxisDrag = (axis: OrbitAxis, clientX: number, clientY: number) => {
+    const base = orbitDraft ?? orbitConfirmed ?? orbitFromAngles(0, 0, 0);
     const el = viewportRef.current;
     if (!el) return;
 
     const rect = el.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
 
-    orbitDrag.current = { active: true, cx, cy };
+    orbitDrag.current = {
+      active: true,
+      axis,
+      lastX: clientX,
+      lastY: clientY,
+      centerX,
+      centerY,
+      quat: base.quat,
+    };
 
-    const h0 = headingDegFromMouse(clientX, clientY, cx, cy);
-    setOrbitDraft(orbitFromHeadingDeg(h0));
+    setActiveOrbitAxis(axis);
+    setOrbitDraft(base);
 
     const onMove = (e: PointerEvent) => {
       const st = orbitDrag.current;
       if (!st?.active) return;
-      const h = headingDegFromMouse(e.clientX, e.clientY, st.cx, st.cy);
-      setOrbitDraft(orbitFromHeadingDeg(h));
+
+      const dx = e.clientX - st.lastX;
+      const dy = e.clientY - st.lastY;
+
+      st.lastX = e.clientX;
+      st.lastY = e.clientY;
+
+      const vx = e.clientX - st.centerX;
+      const vy = e.clientY - st.centerY;
+      const len = Math.hypot(vx, vy) || 1;
+
+      const tangentX = -vy / len;
+      const tangentY = vx / len;
+
+      const deltaDeg = (dx * tangentX + dy * tangentY) * 0.85;
+
+      const localAxis: Vec3 =
+        st.axis === "x" ? [1, 0, 0] : st.axis === "y" ? [0, 1, 0] : [0, 0, 1];
+
+      const dq = quatFromAxisAngle(localAxis, deltaDeg);
+
+      // post-multiply so rotation stays locked to the gizmo's local axis
+      st.quat = quatNormalize(quatMul(st.quat, dq));
+
+      setOrbitDraft(orbitFromQuat(st.quat));
     };
 
     const onUp = () => {
-      if (orbitDrag.current) orbitDrag.current.active = false;
+      const st = orbitDrag.current;
+      if (st) {
+        setOrbitConfirmed(orbitFromQuat(st.quat));
+      }
+
+      setOrbitDraft(null);
+      setActiveOrbitAxis(null);
       orbitDrag.current = null;
+
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -431,6 +562,7 @@ export default function Home() {
 
     setOrbitDraft(null);
     setOrbitConfirmed(null);
+    setActiveOrbitAxis(null);
 
     resetOutputs();
     setRunning(false);
@@ -563,8 +695,8 @@ export default function Home() {
 
           <button
             type="button"
-            disabled={!canRun || orbitDraft !== null}
-            onClick={() => runMultiview(null)}
+            disabled={!canRun}
+            onClick={() => runMultiview(displayOrbit)}
             className="rounded-full bg-[var(--primary-bg)] text-[var(--primary-fg)] px-4 py-2 text-xs font-semibold hover:bg-[var(--primary-bg-hover)] transition disabled:opacity-40 disabled:hover:bg-[var(--primary-bg)] disabled:cursor-not-allowed"
           >
             {running ? "Generating…" : "Generate Multiview"}
@@ -579,12 +711,6 @@ export default function Home() {
           className="absolute inset-0 bg-[var(--viewport-bg)] overflow-hidden"
           onContextMenu={(e) => e.preventDefault()}
           onPointerDown={(e) => {
-            if (e.button === 2) {
-              e.preventDefault();
-              startOrbitDrag(e.clientX, e.clientY);
-              return;
-            }
-
             if (e.button === 0 && hasFrames) {
               (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
               beginDrag(e.clientX, e.pointerId);
@@ -629,8 +755,10 @@ export default function Home() {
             <div className="flex h-full w-full max-w-[1280px] flex-col items-center justify-center gap-4 min-h-0 min-w-0">
               <button
                 type="button"
-                onClick={() => {
-                  if (!hasFrames) pickObject();
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  pickObject();
                 }}
                 className={[
                   "relative shrink min-h-0 min-w-0 overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[var(--centerbox-bg)]",
@@ -657,45 +785,207 @@ export default function Home() {
                     />
                   ) : (
                     <div className="text-[color:var(--muted2)] text-sm">
-                      Upload image
+                      Right-click to upload image
                     </div>
                   )}
                 </div>
 
-                {orbitDraft && (
-                  <div className="pointer-events-none absolute inset-0 grid place-items-center z-20">
-                    {(() => {
-                      const size = 600;
-                      const r = size / 2;
+                <div className="pointer-events-none absolute inset-0 grid place-items-center z-20">
+                  {(() => {
+                    const boxSize = 320;
+                    const axisSize = 268;
+                    const orbitRingSize = 188;
 
-                      return (
+                    const { axis: gizmoAxis, deg: gizmoDeg } = quatToAxisAngle(
+                      displayOrbit.quat,
+                    );
+                    const gizmoTransform = `rotate3d(${gizmoAxis[0]}, ${gizmoAxis[1]}, ${gizmoAxis[2]}, ${gizmoDeg}deg)`;
+
+                    const strokeForAxis = (axis: OrbitAxis) => {
+                      if (axis === "x") {
+                        return activeOrbitAxis === "x"
+                          ? "var(--axis-x-active)"
+                          : "var(--axis-x)";
+                      }
+                      if (axis === "y") {
+                        return activeOrbitAxis === "y"
+                          ? "var(--axis-y-active)"
+                          : "var(--axis-y)";
+                      }
+                      return activeOrbitAxis === "z"
+                        ? "var(--axis-z-active)"
+                        : "var(--axis-z)";
+                    };
+
+                    const widthForAxis = (axis: OrbitAxis) =>
+                      activeOrbitAxis === axis ? 5 : 3;
+
+                    return (
+                      <div
+                        className="relative"
+                        style={{
+                          width: boxSize,
+                          height: boxSize,
+                          perspective: "1600px",
+                        }}
+                      >
                         <div
-                          className="relative max-w-full max-h-full"
-                          style={{ width: size, height: size }}
+                          className="absolute inset-0"
+                          style={{
+                            transformStyle: "preserve-3d",
+                            transform: "rotateX(-24deg) rotateY(30deg)",
+                          }}
                         >
                           <div
-                            className="absolute left-1/2 top-1/2 h-[2px] bg-[var(--orbit)] origin-center"
+                            className="absolute inset-0"
                             style={{
-                              width: size,
-                              transform: `translate(-50%, -50%) rotate(${orbitDraft.headingDeg}deg)`,
-                            }}
-                          />
-
-                          <div
-                            className="absolute left-1/2 top-1/2"
-                            style={{
-                              transform: `translate(-50%, -50%) rotate(${orbitDraft.headingDeg}deg) translateX(${r}px)`,
+                              transformStyle: "preserve-3d",
+                              transform: gizmoTransform,
+                              willChange: "transform",
                             }}
                           >
-                            <div className="h-0 w-0 border-y-[7px] border-y-transparent border-l-[12px] border-l-[color:var(--orbit-strong)]" />
-                          </div>
+                            {/* X axis ring - red */}
+                            <div
+                              role="button"
+                              tabIndex={-1}
+                              className="absolute left-1/2 top-1/2 pointer-events-auto"
+                              style={{
+                                width: axisSize,
+                                height: axisSize,
+                                transformStyle: "preserve-3d",
+                                transform:
+                                  "translate3d(-50%, -50%, 0px) rotateY(90deg)",
+                                cursor: "grab",
+                              }}
+                              onPointerDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                startAxisDrag("x", e.clientX, e.clientY);
+                              }}
+                            >
+                              <svg
+                                width={axisSize}
+                                height={axisSize}
+                                viewBox={`0 0 ${axisSize} ${axisSize}`}
+                                className="overflow-visible"
+                              >
+                                <circle
+                                  cx={axisSize / 2}
+                                  cy={axisSize / 2}
+                                  r={axisSize / 2 - 6}
+                                  fill="none"
+                                  stroke={strokeForAxis("x")}
+                                  strokeWidth={widthForAxis("x")}
+                                  style={{ pointerEvents: "stroke" }}
+                                />
+                              </svg>
+                            </div>
 
-                          <div className="absolute left-1/2 top-1/2 h-[10px] w-[10px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--orbit-dot)]" />
+                            {/* Y axis ring - green */}
+                            <div
+                              role="button"
+                              tabIndex={-1}
+                              className="absolute left-1/2 top-1/2 pointer-events-auto"
+                              style={{
+                                width: axisSize,
+                                height: axisSize,
+                                transformStyle: "preserve-3d",
+                                transform:
+                                  "translate3d(-50%, -50%, 0px) rotateX(90deg)",
+                                cursor: "grab",
+                              }}
+                              onPointerDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                startAxisDrag("y", e.clientX, e.clientY);
+                              }}
+                            >
+                              <svg
+                                width={axisSize}
+                                height={axisSize}
+                                viewBox={`0 0 ${axisSize} ${axisSize}`}
+                                className="overflow-visible"
+                              >
+                                <circle
+                                  cx={axisSize / 2}
+                                  cy={axisSize / 2}
+                                  r={axisSize / 2 - 6}
+                                  fill="none"
+                                  stroke={strokeForAxis("y")}
+                                  strokeWidth={widthForAxis("y")}
+                                  style={{ pointerEvents: "stroke" }}
+                                />
+                              </svg>
+                            </div>
+
+                            {/* Z axis ring - blue */}
+                            <div
+                              role="button"
+                              tabIndex={-1}
+                              className="absolute left-1/2 top-1/2 pointer-events-auto"
+                              style={{
+                                width: axisSize,
+                                height: axisSize,
+                                transformStyle: "preserve-3d",
+                                transform: "translate3d(-50%, -50%, 0px)",
+                                cursor: "grab",
+                              }}
+                              onPointerDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                startAxisDrag("z", e.clientX, e.clientY);
+                              }}
+                            >
+                              <svg
+                                width={axisSize}
+                                height={axisSize}
+                                viewBox={`0 0 ${axisSize} ${axisSize}`}
+                                className="overflow-visible"
+                              >
+                                <circle
+                                  cx={axisSize / 2}
+                                  cy={axisSize / 2}
+                                  r={axisSize / 2 - 6}
+                                  fill="none"
+                                  stroke={strokeForAxis("z")}
+                                  strokeWidth={widthForAxis("z")}
+                                  style={{ pointerEvents: "stroke" }}
+                                />
+                              </svg>
+                            </div>
+
+                            {/* white orbit ring */}
+                            <div
+                              className="absolute left-1/2 top-1/2 rounded-full"
+                              style={{
+                                width: orbitRingSize,
+                                height: orbitRingSize,
+                                border: "2px solid var(--orbit)",
+                                transformStyle: "preserve-3d",
+                                transform:
+                                  "translate3d(-50%, -50%, -4px) rotateX(90deg)",
+                                opacity: 0.28,
+                              }}
+                            />
+
+                            <div
+                              className="absolute left-1/2 top-1/2 rounded-full"
+                              style={{
+                                width: orbitRingSize,
+                                height: orbitRingSize,
+                                border: "2px solid var(--orbit-strong)",
+                                transformStyle: "preserve-3d",
+                                transform:
+                                  "translate3d(-50%, -50%, 4px) rotateX(90deg)",
+                                opacity: 0.96,
+                              }}
+                            />
+                          </div>
                         </div>
-                      );
-                    })()}
-                  </div>
-                )}
+                      </div>
+                    );
+                  })()}
+                </div>
               </button>
 
               {/* frame scrub bar */}
@@ -724,45 +1014,6 @@ export default function Home() {
               </div>
             </div>
           </div>
-
-          {/* Orbit confirm panel */}
-          {orbitDraft && (
-            <div
-              className="absolute top-4 left-1/2 -translate-x-1/2 rounded-2xl border border-[color:var(--border)] bg-[var(--panel-strong)] backdrop-blur px-4 py-3 text-sm z-50"
-              onPointerDownCapture={(e) => e.stopPropagation()}
-              onPointerUpCapture={(e) => e.stopPropagation()}
-              onPointerMoveCapture={(e) => e.stopPropagation()}
-            >
-              <div className="text-[color:var(--muted2)] text-center">
-                Orbit heading{" "}
-                {(((orbitDraft.headingDeg % 360) + 360) % 360).toFixed(0)}°
-              </div>
-
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-xl bg-[var(--primary-bg)] text-[var(--primary-fg)] px-3 py-1.5 text-xs font-semibold hover:bg-[var(--primary-bg-hover)] transition"
-                  disabled={!canRun}
-                  onClick={() => {
-                    const spec = orbitDraft;
-                    setOrbitConfirmed(spec);
-                    setOrbitDraft(null);
-                    runMultiview(spec);
-                  }}
-                >
-                  Confirm & Generate
-                </button>
-
-                <button
-                  type="button"
-                  className="rounded-xl border border-[color:var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[color:var(--muted2)] hover:bg-[var(--surface-hover)] transition"
-                  onClick={() => setOrbitDraft(null)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
 
           {hasFrames && (
             <div className="absolute top-3 left-4 text-[11px] text-[color:var(--muted3)]">
@@ -947,6 +1198,14 @@ export default function Home() {
           --orbit:rgba(255,255,255,0.70);
           --orbit-strong:rgba(255,255,255,0.80);
           --orbit-dot:rgba(255,255,255,0.80);
+
+          --axis-x:#ff5a5a;
+          --axis-y:#48d26f;
+          --axis-z:#5aa8ff;
+
+          --axis-x-active:#ff8a8a;
+          --axis-y-active:#7ef39d;
+          --axis-z-active:#8bc4ff;
         }
 
         :root[data-theme="light"]{
@@ -991,6 +1250,14 @@ export default function Home() {
           --orbit:rgba(17,24,39,0.55);
           --orbit-strong:rgba(17,24,39,0.70);
           --orbit-dot:rgba(17,24,39,0.70);
+
+          --axis-x:#d63d3d;
+          --axis-y:#2fa956;
+          --axis-z:#3278d8;
+
+          --axis-x-active:#f06262;
+          --axis-y-active:#4dcc73;
+          --axis-z-active:#5b98ea;
         }
       `}</style>
     </div>
