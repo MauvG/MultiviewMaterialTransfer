@@ -161,8 +161,8 @@ async def multiview_transfer(
     ref_path.write_bytes(await reference.read())
     obj_path.write_bytes(await object.read())
 
-    downscale_image_in_place(ref_path, max_side=1024)
-    downscale_image_in_place(obj_path, max_side=1024)
+    # downscale_image_in_place(ref_path, max_side=1024)
+    # downscale_image_in_place(obj_path, max_side=1024)
 
     orbit_axis = None
     if orbit_axis_x is not None and orbit_axis_y is not None and orbit_axis_z is not None:

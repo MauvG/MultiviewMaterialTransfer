@@ -182,24 +182,40 @@ def get_axis_orbit_w2cs(
     clockwise: bool = True,
 ):
     """
-    General orbit around an arbitrary axis (world-space).
-    Produces world-to-camera matrices (w2cs), similar to get_arc_horizontal_w2cs.
-    """
+    Orbit around an arbitrary world-space axis.
 
+    The axis is the NORMAL of the orbit plane, not a tangent direction.
+    Identity should match the default horizontal orbit when orbit_axis == [0, -1, 0].
+    """
     ref_c2w = torch.linalg.inv(ref_w2c)
     ref_position = ref_c2w[:3, 3]
 
     if up is None:
         up = -ref_c2w[:3, 1]
-    assert up is not None
 
+    up = up.to(device=ref_w2c.device, dtype=ref_w2c.dtype)
     up = F.normalize(up, dim=0)
 
-    # orbit_axis comes from user; normalize and put on correct device/dtype
     axis_vec = orbit_axis.to(device=ref_w2c.device, dtype=ref_w2c.dtype)
-    axis_vec = F.normalize(axis_vec, dim=0)
+    axis_norm = torch.linalg.norm(axis_vec)
 
-    theta_end = torch.deg2rad(torch.tensor(degree, device=ref_w2c.device, dtype=ref_w2c.dtype))
+    if axis_norm < 1e-6:
+        return get_arc_horizontal_w2cs(
+            ref_w2c,
+            lookat,
+            up,
+            num_frames=num_frames,
+            clockwise=clockwise,
+            endpoint=endpoint,
+            degree=degree,
+        )
+
+    axis_vec = axis_vec / axis_norm
+
+    theta_end = torch.deg2rad(
+        torch.tensor(float(degree), device=ref_w2c.device, dtype=ref_w2c.dtype)
+    )
+
     thetas = (
         torch.linspace(0.0, theta_end, num_frames, device=ref_w2c.device, dtype=ref_w2c.dtype)
         if endpoint
@@ -211,11 +227,9 @@ def get_axis_orbit_w2cs(
 
     rot_mats = roma.rotvec_to_rotmat(thetas[:, None] * axis_vec[None])
 
-    # Rotate camera position around axis
-    base = ref_position - lookat
-    positions = torch.einsum("nij,j->ni", rot_mats, base) + lookat
+    base_offset = ref_position - lookat
+    positions = torch.einsum("nij,j->ni", rot_mats, base_offset) + lookat
 
-    # Rotate up along the orbit to keep the camera stable (avoids weird roll)
     up_vectors = torch.einsum("nij,j->ni", rot_mats, up)
 
     return get_lookat_w2cs(positions, lookat, up_vectors)
@@ -571,20 +585,38 @@ def get_lookat_w2cs(
 ):
     """
     Args:
-        positions: (N, 3) tensor of camera positions
-        lookat: (3,) tensor of lookat point
-        up: (3,) or (N, 3) tensor of up vector
+        positions: (N, 3) camera positions
+        lookat: (3,) look-at point
+        up: (3,) or (N, 3) preferred up vector(s)
 
     Returns:
-        w2cs: (N, 3, 3) tensor of world to camera rotation matrices
+        (N, 4, 4) world-to-camera matrices
     """
     forward_vectors = F.normalize(lookat - positions, dim=-1)
     if face_off:
         forward_vectors = -forward_vectors
+
     if up.dim() == 1:
-        up = up[None]
+        up = up[None].expand_as(forward_vectors)
+    else:
+        up = up.expand_as(forward_vectors)
+
+    up = up - (up * forward_vectors).sum(dim=-1, keepdim=True) * forward_vectors
+
+    up_norm = torch.linalg.norm(up, dim=-1, keepdim=True)
+    bad = up_norm < 1e-6
+
+    if bad.any():
+        fallback_up = positions.new_tensor([0.0, -1.0, 0.0]).expand_as(up)
+        fallback_up = fallback_up - (fallback_up * forward_vectors).sum(dim=-1, keepdim=True) * forward_vectors
+        fallback_up = F.normalize(fallback_up, dim=-1)
+        up = torch.where(bad, fallback_up, up)
+
+    up = F.normalize(up, dim=-1)
+
     right_vectors = F.normalize(torch.cross(forward_vectors, up, dim=-1), dim=-1)
     down_vectors = F.normalize(torch.cross(forward_vectors, right_vectors, dim=-1), dim=-1)
+
     Rs = torch.stack([right_vectors, down_vectors, forward_vectors], dim=-1)
     w2cs = torch.linalg.inv(rt_to_mat4(Rs, positions))
     return w2cs
