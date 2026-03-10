@@ -381,7 +381,7 @@ def get_preset_pose_fov(
             ).numpy()
 
         fovs = np.full((num_frames,), fov)
-        
+    
     elif option == "linear-sides":
         poses = torch.linalg.inv(
             get_linear_sides_w2cs(
