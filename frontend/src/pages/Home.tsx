@@ -156,19 +156,42 @@ function norm3(v: Vec3): Vec3 {
   return [v[0] / n, v[1] / n, v[2] / n];
 }
 
-function preloadFrame(src: string) {
-  return new Promise<void>((resolve) => {
+type ImageSize = {
+  width: number;
+  height: number;
+};
+
+function getImageSize(src: string) {
+  return new Promise<ImageSize>((resolve, reject) => {
     const img = new Image();
     img.decoding = "async";
-    img.onload = () => resolve();
-    img.onerror = () => resolve();
+    img.onload = () =>
+      resolve({
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+      });
+    img.onerror = () => reject(new Error(`Failed to load image size: ${src}`));
     img.src = src;
   });
 }
 
-async function preloadFrames(srcs: string[]) {
-  await Promise.all(srcs.map((src) => preloadFrame(src)));
-  return srcs;
+function revokeObjectUrls(urls: string[]) {
+  for (const url of urls) {
+    if (url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+  }
+}
+
+async function fetchFramesAsObjectUrls(srcs: string[]) {
+  return Promise.all(
+    srcs.map(async (src) => {
+      const res = await fetch(src, { cache: "force-cache" });
+      if (!res.ok) throw new Error(`Failed to fetch frame: ${src}`);
+      const blob = await res.blob();
+      return URL.createObjectURL(blob);
+    }),
+  );
 }
 
 export default function Home() {
@@ -217,6 +240,17 @@ export default function Home() {
 
   const [objFrames, setObjFrames] = useState<string[]>([]);
   const [predFrames, setPredFrames] = useState<string[]>([]);
+
+  const [displayFrameKind, setDisplayFrameKind] = useState<
+    "obj" | "pred" | null
+  >(null);
+  const [objectRenderSize, setObjectRenderSize] = useState<ImageSize | null>(
+    null,
+  );
+
+  const objectUrlRef = useRef<string | null>(null);
+  const objFrameUrlsRef = useRef<string[]>([]);
+  const predFrameUrlsRef = useRef<string[]>([]);
 
   const [yaw01, setYaw01] = useState(0);
   const [autoSpin, setAutoSpin] = useState(false);
@@ -268,16 +302,10 @@ export default function Home() {
     [customRefs, folderRefs],
   );
 
-  const hasPredFrames = predFrames.length > 0;
-  const hasObjFrames = objFrames.length > 0;
-
-  const activeFrameKind =
-    referenceImage && hasPredFrames ? "pred" : hasObjFrames ? "obj" : null;
-
   const activeFrames =
-    activeFrameKind === "pred"
+    displayFrameKind === "pred"
       ? predFrames
-      : activeFrameKind === "obj"
+      : displayFrameKind === "obj"
         ? objFrames
         : [];
 
@@ -293,9 +321,9 @@ export default function Home() {
   const currentFrame = hasFrames ? activeFrames[frameIndex] : null;
 
   const frameLabel = useMemo(() => {
-    if (!hasFrames || !activeFrameKind) return "";
-    return `${activeFrameKind}_${String(frameIndex).padStart(3, "0")}.png`;
-  }, [hasFrames, frameIndex, activeFrameKind]);
+    if (!hasFrames || !displayFrameKind) return "";
+    return `${displayFrameKind}_${String(frameIndex).padStart(3, "0")}.png`;
+  }, [hasFrames, frameIndex, displayFrameKind]);
 
   const canRun = useMemo(
     () => Boolean(objectImage) && !running,
@@ -303,27 +331,45 @@ export default function Home() {
   );
 
   const resetOutputs = () => {
+    revokeObjectUrls(objFrameUrlsRef.current);
+    revokeObjectUrls(predFrameUrlsRef.current);
+    objFrameUrlsRef.current = [];
+    predFrameUrlsRef.current = [];
+
     setObjFrames([]);
     setPredFrames([]);
+    setDisplayFrameKind(null);
     setYaw01(0);
     setAutoSpin(false);
-  };
-
-  const clearPredictedFrames = () => {
-    setPredFrames([]);
   };
 
   const setReference = (src: string | null, id: string) => {
     setReferenceImage(src);
     setActiveRefId(id);
-    clearPredictedFrames();
   };
 
   const pickObject = () => objInputRef.current?.click();
 
-  const onObjectFile = (file: File | null) => {
+  const onObjectFile = async (file: File | null) => {
     if (!file) return;
-    setObjectImage(URL.createObjectURL(file));
+
+    const url = URL.createObjectURL(file);
+
+    if (objectUrlRef.current?.startsWith("blob:")) {
+      URL.revokeObjectURL(objectUrlRef.current);
+    }
+    objectUrlRef.current = url;
+
+    setObjectImage(url);
+
+    try {
+      const size = await getImageSize(url);
+      setObjectRenderSize(size);
+    } catch (e) {
+      console.error(e);
+      setObjectRenderSize(null);
+    }
+
     resetOutputs();
   };
 
@@ -391,7 +437,6 @@ export default function Home() {
       if (!hasFrames) return;
       if (e.key === "ArrowLeft") stepFrame(-1);
       if (e.key === "ArrowRight") stepFrame(1);
-
       if (e.key === "Escape") {
         setOrbitDraft(null);
         setActiveOrbitAxis(null);
@@ -459,7 +504,6 @@ export default function Home() {
     if (!objectImage) return;
 
     setRunning(true);
-    resetOutputs();
 
     try {
       const objBlob = await fetch(objectImage).then((r) => r.blob());
@@ -485,6 +529,7 @@ export default function Home() {
 
       const useOrbit =
         orbit ?? orbitDraft ?? orbitConfirmed ?? orbitFromAngles(0, 0, 0);
+
       if (useOrbit) {
         form.append("orbit_axis_x", String(useOrbit.axis[0]));
         form.append("orbit_axis_y", String(useOrbit.axis[1]));
@@ -499,19 +544,29 @@ export default function Home() {
 
       const data = (await res.json()) as MVResponse;
 
-      const nextObjFrames = data.obj_frames ?? [];
-      const nextPredFrames = data.pred_frames?.length
+      const nextObjFrameSrcs = data.obj_frames ?? [];
+      const nextPredFrameSrcs = data.pred_frames?.length
         ? data.pred_frames
         : (data.frames ?? []);
 
       const [readyObjFrames, readyPredFrames] = await Promise.all([
-        preloadFrames(nextObjFrames),
-        preloadFrames(nextPredFrames),
+        fetchFramesAsObjectUrls(nextObjFrameSrcs),
+        fetchFramesAsObjectUrls(nextPredFrameSrcs),
       ]);
+
+      revokeObjectUrls(objFrameUrlsRef.current);
+      revokeObjectUrls(predFrameUrlsRef.current);
+
+      objFrameUrlsRef.current = readyObjFrames;
+      predFrameUrlsRef.current = readyPredFrames;
 
       setObjFrames(readyObjFrames);
       setPredFrames(readyPredFrames);
+      setDisplayFrameKind(
+        readyPredFrames.length ? "pred" : readyObjFrames.length ? "obj" : null,
+      );
       setYaw01(0);
+      setAutoSpin(false);
     } catch (e) {
       console.error(e);
     } finally {
@@ -592,9 +647,15 @@ export default function Home() {
   };
 
   const onNew = () => {
+    if (objectUrlRef.current?.startsWith("blob:")) {
+      URL.revokeObjectURL(objectUrlRef.current);
+    }
+    objectUrlRef.current = null;
+
     setObjectImage(null);
     setReferenceImage(null);
     setActiveRefId("none");
+    setObjectRenderSize(null);
 
     setOrbitDraft(null);
     setOrbitConfirmed(null);
@@ -660,11 +721,29 @@ export default function Home() {
     setRefScroll01(v01);
   };
 
+  useEffect(() => {
+    return () => {
+      revokeObjectUrls(objFrameUrlsRef.current);
+      revokeObjectUrls(predFrameUrlsRef.current);
+
+      if (objectUrlRef.current?.startsWith("blob:")) {
+        URL.revokeObjectURL(objectUrlRef.current);
+      }
+    };
+  }, []);
+
   const refScrollMax = (() => {
     const el = refStripRef.current;
     if (!el) return 0;
     return Math.max(0, el.scrollWidth - el.clientWidth);
   })();
+
+  const renderBoxStyle = objectRenderSize
+    ? {
+        width: `${objectRenderSize.width}px`,
+        height: `${objectRenderSize.height}px`,
+      }
+    : undefined;
 
   return (
     <div className="h-screen w-screen bg-[var(--app-bg)] text-[color:var(--app-fg)] flex flex-col overflow-hidden transition-colors duration-200">
@@ -806,19 +885,41 @@ export default function Home() {
               >
                 <div className="absolute inset-0 flex items-center justify-center p-4 sm:p-5 md:p-6 min-h-0 min-w-0">
                   {currentFrame ? (
-                    <img
-                      src={currentFrame}
-                      alt="frame"
-                      className="block max-h-full max-w-full object-contain"
-                      draggable={false}
-                    />
+                    <div
+                      className="flex max-h-full max-w-full items-center justify-center"
+                      style={renderBoxStyle}
+                    >
+                      <img
+                        src={currentFrame}
+                        alt="frame"
+                        width={objectRenderSize?.width}
+                        height={objectRenderSize?.height}
+                        className={
+                          objectRenderSize
+                            ? "block h-full w-full object-contain"
+                            : "block max-h-full max-w-full object-contain"
+                        }
+                        draggable={false}
+                      />
+                    </div>
                   ) : objectImage ? (
-                    <img
-                      src={objectImage}
-                      alt="object"
-                      className="block max-h-full max-w-full object-contain"
-                      draggable={false}
-                    />
+                    <div
+                      className="flex max-h-full max-w-full items-center justify-center"
+                      style={renderBoxStyle}
+                    >
+                      <img
+                        src={objectImage}
+                        alt="object"
+                        width={objectRenderSize?.width}
+                        height={objectRenderSize?.height}
+                        className={
+                          objectRenderSize
+                            ? "block h-full w-full object-contain"
+                            : "block max-h-full max-w-full object-contain"
+                        }
+                        draggable={false}
+                      />
+                    </div>
                   ) : (
                     <div className="text-[color:var(--muted2)] text-sm">
                       Right-click to upload image
