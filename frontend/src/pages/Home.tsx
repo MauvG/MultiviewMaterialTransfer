@@ -156,6 +156,21 @@ function norm3(v: Vec3): Vec3 {
   return [v[0] / n, v[1] / n, v[2] / n];
 }
 
+function preloadFrame(src: string) {
+  return new Promise<void>((resolve) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = src;
+  });
+}
+
+async function preloadFrames(srcs: string[]) {
+  await Promise.all(srcs.map((src) => preloadFrame(src)));
+  return srcs;
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window === "undefined") return "dark";
@@ -253,7 +268,19 @@ export default function Home() {
     [customRefs, folderRefs],
   );
 
-  const activeFrames = referenceImage ? predFrames : objFrames;
+  const hasPredFrames = predFrames.length > 0;
+  const hasObjFrames = objFrames.length > 0;
+
+  const activeFrameKind =
+    referenceImage && hasPredFrames ? "pred" : hasObjFrames ? "obj" : null;
+
+  const activeFrames =
+    activeFrameKind === "pred"
+      ? predFrames
+      : activeFrameKind === "obj"
+        ? objFrames
+        : [];
+
   const hasFrames = activeFrames.length > 0;
 
   const frameCount = activeFrames.length;
@@ -266,10 +293,9 @@ export default function Home() {
   const currentFrame = hasFrames ? activeFrames[frameIndex] : null;
 
   const frameLabel = useMemo(() => {
-    if (!hasFrames) return "";
-    const prefix = referenceImage ? "pred" : "obj";
-    return `${prefix}_${String(frameIndex).padStart(3, "0")}.png`;
-  }, [hasFrames, frameIndex, referenceImage]);
+    if (!hasFrames || !activeFrameKind) return "";
+    return `${activeFrameKind}_${String(frameIndex).padStart(3, "0")}.png`;
+  }, [hasFrames, frameIndex, activeFrameKind]);
 
   const canRun = useMemo(
     () => Boolean(objectImage) && !running,
@@ -283,10 +309,14 @@ export default function Home() {
     setAutoSpin(false);
   };
 
+  const clearPredictedFrames = () => {
+    setPredFrames([]);
+  };
+
   const setReference = (src: string | null, id: string) => {
     setReferenceImage(src);
     setActiveRefId(id);
-    resetOutputs();
+    clearPredictedFrames();
   };
 
   const pickObject = () => objInputRef.current?.click();
@@ -361,10 +391,7 @@ export default function Home() {
       if (!hasFrames) return;
       if (e.key === "ArrowLeft") stepFrame(-1);
       if (e.key === "ArrowRight") stepFrame(1);
-      if (e.key === " ") {
-        e.preventDefault();
-        setAutoSpin((v) => !v);
-      }
+
       if (e.key === "Escape") {
         setOrbitDraft(null);
         setActiveOrbitAxis(null);
@@ -472,11 +499,18 @@ export default function Home() {
 
       const data = (await res.json()) as MVResponse;
 
-      if (data.obj_frames?.length) setObjFrames(data.obj_frames);
-      if (data.pred_frames?.length) setPredFrames(data.pred_frames);
-      if (!data.pred_frames?.length && data.frames?.length)
-        setPredFrames(data.frames);
+      const nextObjFrames = data.obj_frames ?? [];
+      const nextPredFrames = data.pred_frames?.length
+        ? data.pred_frames
+        : (data.frames ?? []);
 
+      const [readyObjFrames, readyPredFrames] = await Promise.all([
+        preloadFrames(nextObjFrames),
+        preloadFrames(nextPredFrames),
+      ]);
+
+      setObjFrames(readyObjFrames);
+      setPredFrames(readyPredFrames);
       setYaw01(0);
     } catch (e) {
       console.error(e);
