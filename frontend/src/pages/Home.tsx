@@ -54,6 +54,7 @@ function pathToId(p: string) {
 const deg2rad = (d: number) => (d * Math.PI) / 180;
 
 const IDENTITY_QUAT: Quat = [0, 0, 0, 1];
+const DEFAULT_ORBIT_NORMAL: Vec3 = [0, -1, 0];
 
 function cross(a: Vec3, b: Vec3): Vec3 {
   return [
@@ -121,7 +122,7 @@ function orbitFromQuat(
   rollDeg: number = 0,
 ): OrbitSpec {
   const q = quatNormalize(quat);
-  const axis = norm3(quatRotateVec(q, [0, 0, 1]));
+  const axis = norm3(quatRotateVec(q, DEFAULT_ORBIT_NORMAL));
 
   return {
     tiltDeg: 90,
