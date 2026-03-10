@@ -182,24 +182,32 @@ def get_axis_orbit_w2cs(
     clockwise: bool = True,
 ):
     """
-    Orbit around an arbitrary world-space axis.
+    Stable orbit around an arbitrary world-space axis.
 
-    The axis is the NORMAL of the orbit plane, not a tangent direction.
-    Identity should match the default horizontal orbit when orbit_axis == [0, -1, 0].
+    orbit_axis is the NORMAL of the orbit plane.
+    Instead of re-solving a look-at camera from a rotated up vector
+    (which becomes unstable for vertical/diagonal orbits), rotate the
+    full reference camera pose rigidly around the axis passing through
+    the look-at point.
+
+    This preserves:
+      - correct orbit path
+      - camera roll continuity
+      - stability through vertical / diagonal loops
     """
+    device = ref_w2c.device
+    dtype = ref_w2c.dtype
+
     ref_c2w = torch.linalg.inv(ref_w2c)
+    ref_R = ref_c2w[:3, :3]
     ref_position = ref_c2w[:3, 3]
 
-    if up is None:
-        up = -ref_c2w[:3, 1]
-
-    up = up.to(device=ref_w2c.device, dtype=ref_w2c.dtype)
-    up = F.normalize(up, dim=0)
-
-    axis_vec = orbit_axis.to(device=ref_w2c.device, dtype=ref_w2c.dtype)
+    axis_vec = orbit_axis.to(device=device, dtype=dtype)
     axis_norm = torch.linalg.norm(axis_vec)
 
     if axis_norm < 1e-6:
+        if up is None:
+            up = -ref_c2w[:3, 1]
         return get_arc_horizontal_w2cs(
             ref_w2c,
             lookat,
@@ -213,26 +221,31 @@ def get_axis_orbit_w2cs(
     axis_vec = axis_vec / axis_norm
 
     theta_end = torch.deg2rad(
-        torch.tensor(float(degree), device=ref_w2c.device, dtype=ref_w2c.dtype)
+        torch.tensor(float(degree), device=device, dtype=dtype)
     )
 
     thetas = (
-        torch.linspace(0.0, theta_end, num_frames, device=ref_w2c.device, dtype=ref_w2c.dtype)
+        torch.linspace(0.0, theta_end, num_frames, device=device, dtype=dtype)
         if endpoint
-        else torch.linspace(0.0, theta_end, num_frames + 1, device=ref_w2c.device, dtype=ref_w2c.dtype)[:-1]
+        else torch.linspace(0.0, theta_end, num_frames + 1, device=device, dtype=dtype)[:-1]
     )
 
     if not clockwise:
         thetas = -thetas
 
-    rot_mats = roma.rotvec_to_rotmat(thetas[:, None] * axis_vec[None])
+    rot_mats = roma.rotvec_to_rotmat(thetas[:, None] * axis_vec[None])  
 
     base_offset = ref_position - lookat
-    positions = torch.einsum("nij,j->ni", rot_mats, base_offset) + lookat
+    positions = torch.einsum("nij,j->ni", rot_mats, base_offset) + lookat[None]
 
-    up_vectors = torch.einsum("nij,j->ni", rot_mats, up)
+    rotations = torch.einsum("nij,jk->nik", rot_mats, ref_R)
 
-    return get_lookat_w2cs(positions, lookat, up_vectors)
+    c2ws = torch.eye(4, device=device, dtype=dtype)[None].repeat(num_frames, 1, 1)
+    c2ws[:, :3, :3] = rotations
+    c2ws[:, :3, 3] = positions
+
+    w2cs = torch.linalg.inv(c2ws)
+    return w2cs
 
 
 def get_preset_pose_fov(
