@@ -224,6 +224,8 @@ export default function Home() {
     null,
   );
 
+  const [isGizmoHovered, setIsGizmoHovered] = useState(false);
+
   const displayOrbit = useMemo(
     () => orbitDraft ?? orbitConfirmed ?? orbitFromAngles(0, 0, 0),
     [orbitDraft, orbitConfirmed],
@@ -795,6 +797,8 @@ export default function Home() {
                     const boxSize = 320;
                     const axisSize = 268;
                     const orbitRingSize = 188;
+                    const gizmoOpacity =
+                      isGizmoHovered || activeOrbitAxis !== null ? 1 : 0.28;
 
                     const { axis: gizmoAxis, deg: gizmoDeg } = quatToAxisAngle(
                       displayOrbit.quat,
@@ -822,11 +826,12 @@ export default function Home() {
 
                     return (
                       <div
-                        className="relative"
+                        className="relative transition-opacity duration-200 ease-out"
                         style={{
                           width: boxSize,
                           height: boxSize,
                           perspective: "1600px",
+                          opacity: gizmoOpacity,
                         }}
                       >
                         <div
@@ -857,6 +862,8 @@ export default function Home() {
                                   "translate3d(-50%, -50%, 0px) rotateY(90deg)",
                                 cursor: "grab",
                               }}
+                              onPointerEnter={() => setIsGizmoHovered(true)}
+                              onPointerLeave={() => setIsGizmoHovered(false)}
                               onPointerDown={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
@@ -894,6 +901,8 @@ export default function Home() {
                                   "translate3d(-50%, -50%, 0px) rotateX(90deg)",
                                 cursor: "grab",
                               }}
+                              onPointerEnter={() => setIsGizmoHovered(true)}
+                              onPointerLeave={() => setIsGizmoHovered(false)}
                               onPointerDown={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
@@ -930,6 +939,8 @@ export default function Home() {
                                 transform: "translate3d(-50%, -50%, 0px)",
                                 cursor: "grab",
                               }}
+                              onPointerEnter={() => setIsGizmoHovered(true)}
+                              onPointerLeave={() => setIsGizmoHovered(false)}
                               onPointerDown={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
