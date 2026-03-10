@@ -256,23 +256,20 @@ def get_custom_orbit_w2cs(
 ):
     """
     Build a custom orbit by:
-      1) generating the ORIGINAL horizontal orbit trajectory
-      2) rotating that trajectory so its plane normal aligns with orbit_axis
-      3) anchoring the first/source camera back to its original pose
+      1) generating the original horizontal orbit
+      2) converting that path into source-camera-relative c2w poses
+      3) rotating those relative motions so the orbit plane normal matches orbit_axis
+      4) reconstructing world poses with the source camera fixed
 
-    This is important because later the model uses poses relative to the first
-    camera. If we rotate all cameras globally, that change cancels out.
+    This survives the later extrinsics_rel = extrinsics @ c2w_src step.
     """
     ref_c2w = torch.linalg.inv(ref_w2c)
-
-    if up is None:
-        up = -ref_c2w[:3, 1]
-
     device = ref_w2c.device
     dtype = ref_w2c.dtype
 
-    up = up.to(device=device, dtype=dtype)
-    up = F.normalize(up, dim=0)
+    if up is None:
+        up = -ref_c2w[:3, 1]
+    up = F.normalize(up.to(device=device, dtype=dtype), dim=0)
 
     axis_vec = orbit_axis.to(device=device, dtype=dtype)
     axis_norm = torch.linalg.norm(axis_vec)
@@ -288,7 +285,7 @@ def get_custom_orbit_w2cs(
             degree=degree,
         )
 
-    axis_vec = axis_vec / axis_norm
+    axis_vec = F.normalize(axis_vec, dim=0)
 
     base_w2cs = get_arc_horizontal_w2cs(
         ref_w2c,
@@ -301,29 +298,24 @@ def get_custom_orbit_w2cs(
     )
     base_c2ws = torch.linalg.inv(base_w2cs)
 
-    align_R = _rotation_between_vectors(up, axis_vec)
+    src_c2w = base_c2ws[0]
+    src_w2c = torch.linalg.inv(src_c2w)
+    src_R = src_c2w[:3, :3]
 
-    rotated_c2ws = _apply_rigid_transform_to_c2ws(
-        base_c2ws,
-        rotation=align_R,
-        pivot=lookat.to(device=device, dtype=dtype),
-    )
+    default_axis_local = F.normalize(src_R.transpose(0, 1) @ up, dim=0)
+    target_axis_local = F.normalize(src_R.transpose(0, 1) @ axis_vec, dim=0)
 
-    base0_R = base_c2ws[0, :3, :3]
-    base0_t = base_c2ws[0, :3, 3]
+    motion_R = _rotation_between_vectors(default_axis_local, target_axis_local)
 
-    rot0_R = rotated_c2ws[0, :3, :3]
-    rot0_t = rotated_c2ws[0, :3, 3]
+    rel_c2ws = src_w2c.unsqueeze(0) @ base_c2ws
 
-    anchor_R = base0_R @ rot0_R.transpose(0, 1)
-    anchor_t = base0_t - anchor_R @ rot0_t
+    rel_out = rel_c2ws.clone()
+    rel_out[:, :3, 3] = torch.einsum("ij,nj->ni", motion_R, rel_c2ws[:, :3, 3])
+    rel_out[:, :3, :3] = torch.einsum("ij,njk->nik", motion_R, rel_c2ws[:, :3, :3])
 
-    final_c2ws = _apply_world_transform_to_c2ws(
-        rotated_c2ws,
-        rotation=anchor_R,
-        translation=anchor_t,
-    )
+    rel_out[0] = torch.eye(4, device=device, dtype=dtype)
 
+    final_c2ws = src_c2w.unsqueeze(0) @ rel_out
     return torch.linalg.inv(final_c2ws)
 
 def get_preset_pose_fov(
