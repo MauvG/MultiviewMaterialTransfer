@@ -398,9 +398,8 @@ class SEVAPipeline(nn.Module):
         grayscale=False,
         add_front=True,
         add_back=False,
-        camera_trajectory="vertical-orbit",
+        camera_trajectory="orbit",
         zoom_factor=None,
-        orbit_axis=None
     ):
         self.vae.to(device)
         self.image_encoder.to(device)
@@ -468,7 +467,6 @@ class SEVAPipeline(nn.Module):
             up_direction=up_direction,
             fov=fov,
             zoom_factor=zoom_factor,
-            orbit_axis=orbit_axis,
         )
 
         all_c2ws = torch.as_tensor(all_c2ws, device=device)
@@ -578,14 +576,13 @@ class SEVAPipeline(nn.Module):
         elevation,
         distance=2.0,
         fov=0.7,
-        camera_trajectory="vertical-orbit",
+        camera_trajectory="orbit",
         bg_color="white",
         zoom_factor=None,
         num_inference_steps=50,
         cfg_scale=3.0,
         cfg_scale_mid=3.0,
         main_stream="combined",
-        orbit_axis=None,
     ):
         self.guider_mid = MultiviewCFG(cfg_scale)
 
@@ -597,7 +594,6 @@ class SEVAPipeline(nn.Module):
             camera_trajectory=camera_trajectory,
             bg_color=bg_color,
             zoom_factor=zoom_factor,
-            orbit_axis=orbit_axis,
         )
 
         reference_conditioning = self.encode_conditioning(
@@ -608,7 +604,6 @@ class SEVAPipeline(nn.Module):
             camera_trajectory=camera_trajectory,
             bg_color=bg_color,
             zoom_factor=zoom_factor,
-            orbit_axis=orbit_axis,
         )
 
         cond, uncond, c2w, k, input_mask = self.get_combined_conditioning(

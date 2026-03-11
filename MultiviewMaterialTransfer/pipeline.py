@@ -1,10 +1,8 @@
 import gc
 import torch
 from MultiviewMaterialTransfer.models.seva import load_pipeline
-from typing import Optional, Tuple
 
 _pipeline = None
-
 
 def _cuda_cleanup():
     if torch.cuda.is_available():
@@ -62,7 +60,7 @@ def infer(
     distance: float,
     fov: float,
     num_inference_steps: int,
-    orbit_axis: Optional[Tuple[float, float, float]] = None,
+    camera_trajectory: str = "orbit",
 ):
     pipe = get_pipeline()
 
@@ -82,7 +80,7 @@ def infer(
                 distance=distance,
                 fov=fov,
                 num_inference_steps=num_inference_steps,
-                orbit_axis=orbit_axis,
+                camera_trajectory=camera_trajectory,
             )
 
     frames = [f[1:] for f in samples]

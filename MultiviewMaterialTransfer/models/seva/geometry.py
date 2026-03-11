@@ -171,127 +171,10 @@ def rt_to_mat4(R: torch.Tensor, t: torch.Tensor, s: torch.Tensor | None = None) 
     mat4 = torch.cat([mat34, bottom], dim=-2)
     return mat4
 
-def get_axis_orbit_w2cs(
-    ref_w2c: torch.Tensor,
-    lookat: torch.Tensor,
-    up: torch.Tensor | None,
-    num_frames: int,
-    orbit_axis: torch.Tensor,
-    degree: float = 360.0,
-    endpoint: bool = False,
-    clockwise: bool = True,
-    face_off: bool = False,
-) -> torch.Tensor:
-    """
-    Orbit the reference camera around `lookat` by rotating its position around an
-    arbitrary world-space axis `orbit_axis`.
-
-    Unlike the old implementation, this constructs the trajectory directly in
-    world space, so vertical / diagonal orbits remain true orbits around the
-    object center.
-    """
-    ref_c2w = torch.linalg.inv(ref_w2c)
-    ref_position = ref_c2w[:3, 3]
-
-    if up is None:
-        up = -ref_c2w[:3, 1]
-    up = F.normalize(up, dim=0)
-
-    axis = orbit_axis.to(device=ref_w2c.device, dtype=ref_w2c.dtype)
-    axis_norm = torch.linalg.norm(axis)
-    if float(axis_norm.item()) < 1e-6:
-        return get_arc_horizontal_w2cs(
-            ref_w2c,
-            lookat,
-            up,
-            num_frames=num_frames,
-            clockwise=clockwise,
-            endpoint=endpoint,
-            degree=degree,
-            face_off=face_off,
-        )
-    axis = F.normalize(axis, dim=0)
-
-    theta_end = torch.deg2rad(torch.tensor(degree, device=ref_w2c.device, dtype=ref_w2c.dtype))
-    if endpoint:
-        thetas = torch.linspace(0.0, theta_end, num_frames, device=ref_w2c.device, dtype=ref_w2c.dtype)
-    else:
-        thetas = torch.linspace(0.0, theta_end, num_frames + 1, device=ref_w2c.device, dtype=ref_w2c.dtype)[:-1]
-
-    if not clockwise:
-        thetas = -thetas
-
-    rot_mats = roma.rotvec_to_rotmat(thetas[:, None] * axis[None])
-
-    base_radius = ref_position - lookat
-    positions = torch.einsum("nij,j->ni", rot_mats, base_radius) + lookat
-
-    up_vectors = torch.einsum("nij,j->ni", rot_mats, up)
-
-    return get_lookat_w2cs(positions, lookat, up_vectors, face_off=face_off)
-
-def get_custom_orbit_w2cs(
-    ref_w2c: torch.Tensor,
-    lookat: torch.Tensor,
-    up: torch.Tensor | None,
-    num_frames: int,
-    orbit_axis: torch.Tensor,
-    degree: float = 360.0,
-    endpoint: bool = False,
-    clockwise: bool = True,
-):
-    return get_axis_orbit_w2cs(
-        ref_w2c=ref_w2c,
-        lookat=lookat,
-        up=up,
-        num_frames=num_frames,
-        orbit_axis=orbit_axis,
-        degree=degree,
-        endpoint=endpoint,
-        clockwise=clockwise,
-    )
-
-def get_arc_vertical_w2cs(
-    ref_w2c: torch.Tensor,
-    lookat: torch.Tensor,
-    up: torch.Tensor | None,
-    num_frames: int,
-    endpoint: bool = False,
-    degree: float = 360.0,
-    clockwise: bool = True,
-) -> torch.Tensor:
-    ref_c2w = torch.linalg.inv(ref_w2c)
-    ref_position = ref_c2w[:3, 3]
-
-    # Default up matches the repo's convention.
-    if up is None:
-        up = -ref_c2w[:3, 1]
-
-    # Camera forward and right at the reference pose.
-    forward = torch.nn.functional.normalize(lookat - ref_position, dim=0)
-    right = torch.nn.functional.normalize(torch.cross(forward, up, dim=0), dim=0)
-
-    thetas = (
-        torch.linspace(0.0, torch.pi * degree / 180, num_frames, device=ref_w2c.device)
-        if endpoint else
-        torch.linspace(0.0, torch.pi * degree / 180, num_frames + 1, device=ref_w2c.device)[:-1]
-    )
-    if not clockwise:
-        thetas = -thetas
-
-    offsets = ref_position - lookat
-    R = roma.rotvec_to_rotmat(thetas[:, None] * right[None])  # rotate around RIGHT axis
-    positions = torch.einsum("nij,j->ni", R, offsets) + lookat
-
-    # Rotate the up vector too, so camera roll stays stable over the arc.
-    ups = torch.einsum("nij,j->ni", R, up)
-
-    return get_lookat_w2cs(positions, lookat, ups)
 
 def get_preset_pose_fov(
     option: Literal[
         "orbit",
-        "vertical-orbit",
         "spiral",
         "lemniscate",
         "zoom-in",
@@ -324,7 +207,6 @@ def get_preset_pose_fov(
     spiral_radii: list[float] = [0.5, 0.5, 0.2],
     zoom_factor: float | None = None,
     side_span: float = 2.0,
-    orbit_axis=None,
 
 ):
     if option == "random":
@@ -344,47 +226,16 @@ def get_preset_pose_fov(
 
     poses = fovs = None
     if option == "orbit":
-        if orbit_axis is not None:
-            axis_t = (
-                orbit_axis
-                if isinstance(orbit_axis, torch.Tensor)
-                else torch.tensor(orbit_axis, device=start_w2c.device, dtype=start_w2c.dtype)
-            )
-
-            poses = torch.linalg.inv(
-                get_custom_orbit_w2cs(
-                    start_w2c,
-                    look_at,
-                    up_direction,
-                    num_frames=num_frames,
-                    orbit_axis=axis_t,
-                    degree=360.0,
-                    endpoint=False,
-                )
-            ).numpy()
-        else:
-            poses = torch.linalg.inv(
-                get_arc_horizontal_w2cs(
-                    start_w2c,
-                    look_at,
-                    up_direction,
-                    num_frames=num_frames,
-                    endpoint=False,
-                )
-            ).numpy()
-
-        fovs = np.full((num_frames,), fov)
-    
-    elif option == "vertical-orbit":
         poses = torch.linalg.inv(
-            get_arc_vertical_w2cs(
-                start_w2c, look_at, up_direction,
-                num_frames=num_frames, endpoint=False,
-                degree=360.0,
+            get_arc_horizontal_w2cs(
+                start_w2c,
+                look_at,
+                up_direction,
+                num_frames=num_frames,
+                endpoint=False,
             )
         ).numpy()
         fovs = np.full((num_frames,), fov)
-    
     elif option == "linear-sides":
         poses = torch.linalg.inv(
             get_linear_sides_w2cs(
@@ -649,38 +500,20 @@ def get_lookat_w2cs(
 ):
     """
     Args:
-        positions: (N, 3) camera positions
-        lookat: (3,) look-at point
-        up: (3,) or (N, 3) preferred up vector(s)
+        positions: (N, 3) tensor of camera positions
+        lookat: (3,) tensor of lookat point
+        up: (3,) or (N, 3) tensor of up vector
 
     Returns:
-        (N, 4, 4) world-to-camera matrices
+        w2cs: (N, 3, 3) tensor of world to camera rotation matrices
     """
     forward_vectors = F.normalize(lookat - positions, dim=-1)
     if face_off:
         forward_vectors = -forward_vectors
-
     if up.dim() == 1:
-        up = up[None].expand_as(forward_vectors)
-    else:
-        up = up.expand_as(forward_vectors)
-
-    up = up - (up * forward_vectors).sum(dim=-1, keepdim=True) * forward_vectors
-
-    up_norm = torch.linalg.norm(up, dim=-1, keepdim=True)
-    bad = up_norm < 1e-6
-
-    if bad.any():
-        fallback_up = positions.new_tensor([0.0, -1.0, 0.0]).expand_as(up)
-        fallback_up = fallback_up - (fallback_up * forward_vectors).sum(dim=-1, keepdim=True) * forward_vectors
-        fallback_up = F.normalize(fallback_up, dim=-1)
-        up = torch.where(bad, fallback_up, up)
-
-    up = F.normalize(up, dim=-1)
-
+        up = up[None]
     right_vectors = F.normalize(torch.cross(forward_vectors, up, dim=-1), dim=-1)
     down_vectors = F.normalize(torch.cross(forward_vectors, right_vectors, dim=-1), dim=-1)
-
     Rs = torch.stack([right_vectors, down_vectors, forward_vectors], dim=-1)
     w2cs = torch.linalg.inv(rt_to_mat4(Rs, positions))
     return w2cs

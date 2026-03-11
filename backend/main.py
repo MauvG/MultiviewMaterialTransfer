@@ -5,7 +5,6 @@ import gc
 import threading
 from pathlib import Path
 from uuid import uuid4
-from typing import Optional
 
 import torch
 from PIL import Image, ImageOps
@@ -30,6 +29,22 @@ OUTPUTS_DIR = ROOT_DIR / "outputs"
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 
+ALLOWED_CAMERA_TRAJECTORIES = {
+    "orbit",
+    "spiral",
+    "lemniscate",
+    "roll",
+    "spiral-top",
+    "spiral-down",
+    "spiral-zoom-in",
+    "spiral-zoom-out",
+    "vertical-orbit-360",
+    "vertical-orbit-180",
+    "orbit-sinusoidal",
+    "strafe-right",
+    "strafe-left",
+    "close-zoom",
+}
 
 def cleanup_cuda():
     gc.collect()
@@ -147,9 +162,7 @@ async def multiview_transfer(
     fov: float = Form(0.7),
     steps: int = Form(50),
     max_frames: int = Form(21),
-    orbit_axis_x: Optional[float] = Form(None),
-    orbit_axis_y: Optional[float] = Form(None),
-    orbit_axis_z: Optional[float] = Form(None),
+    camera_trajectory: str = Form("orbit"),
 ):
     job_id = uuid4().hex
     job_dir = OUTPUTS_DIR / job_id
@@ -164,9 +177,8 @@ async def multiview_transfer(
     # downscale_image_in_place(ref_path, max_side=1024)
     # downscale_image_in_place(obj_path, max_side=1024)
 
-    orbit_axis = None
-    if orbit_axis_x is not None and orbit_axis_y is not None and orbit_axis_z is not None:
-        orbit_axis = (orbit_axis_x, orbit_axis_y, orbit_axis_z)
+    if camera_trajectory not in ALLOWED_CAMERA_TRAJECTORIES:
+        camera_trajectory = "orbit"
 
     with GPU_LOCK, torch.inference_mode():
         get_unload_z_pipe()()
@@ -178,7 +190,7 @@ async def multiview_transfer(
             distance=distance,
             fov=fov,
             num_inference_steps=steps,
-            orbit_axis=orbit_axis,
+            camera_trajectory=camera_trajectory,
         )
 
         get_unload_mv_pipe()()

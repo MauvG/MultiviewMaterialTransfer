@@ -17,6 +17,22 @@ type MVResponse = {
   frames?: string[];
 };
 
+type CameraTrajectory =
+  | "orbit"
+  | "spiral"
+  | "lemniscate"
+  | "roll"
+  | "spiral-top"
+  | "spiral-down"
+  | "spiral-zoom-in"
+  | "spiral-zoom-out"
+  | "vertical-orbit-360"
+  | "vertical-orbit-180"
+  | "orbit-sinusoidal"
+  | "strafe-right"
+  | "strafe-left"
+  | "close-zoom";
+
 type Vec3 = [number, number, number];
 
 type OrbitAxis = "x" | "y" | "z";
@@ -252,6 +268,29 @@ export default function Home() {
   const objectUrlRef = useRef<string | null>(null);
   const objFrameUrlsRef = useRef<string[]>([]);
   const predFrameUrlsRef = useRef<string[]>([]);
+
+  const CAMERA_TRAJECTORY_OPTIONS: {
+    value: CameraTrajectory;
+    label: string;
+  }[] = [
+    { value: "orbit", label: "Orbit" },
+    { value: "spiral", label: "Spiral" },
+    { value: "lemniscate", label: "Lemniscate" },
+    { value: "roll", label: "Roll" },
+    { value: "spiral-top", label: "Spiral Top" },
+    { value: "spiral-down", label: "Spiral Down" },
+    { value: "spiral-zoom-in", label: "Spiral Zoom In" },
+    { value: "spiral-zoom-out", label: "Spiral Zoom Out" },
+    { value: "vertical-orbit-180", label: "Vertical Orbit 180" },
+    { value: "vertical-orbit-360", label: "Vertical Orbit 360" },
+    { value: "orbit-sinusoidal", label: "Orbit Sinusoidal" },
+    { value: "strafe-right", label: "Strafe Right" },
+    { value: "strafe-left", label: "Strafe Left" },
+    { value: "close-zoom", label: "Close Zoom" },
+  ];
+
+  const [cameraTrajectory, setCameraTrajectory] =
+    useState<CameraTrajectory>("orbit");
 
   const [yaw01, setYaw01] = useState(0);
   const [autoSpin, setAutoSpin] = useState(false);
@@ -501,7 +540,7 @@ export default function Home() {
     }
   };
 
-  const runMultiview = async (orbit?: OrbitSpec | null) => {
+  const runMultiview = async () => {
     if (!objectImage) return;
 
     setRunning(true);
@@ -527,15 +566,7 @@ export default function Home() {
       form.append("fov", "0.7");
       form.append("steps", "50");
       form.append("max_frames", "21");
-
-      const useOrbit =
-        orbit ?? orbitDraft ?? orbitConfirmed ?? orbitFromAngles(0, 0, 0);
-
-      if (useOrbit) {
-        form.append("orbit_axis_x", String(useOrbit.axis[0]));
-        form.append("orbit_axis_y", String(useOrbit.axis[1]));
-        form.append("orbit_axis_z", String(useOrbit.axis[2]));
-      }
+      form.append("camera_trajectory", cameraTrajectory);
 
       const res = await fetch("/api/multiview-transfer", {
         method: "POST",
@@ -809,10 +840,33 @@ export default function Home() {
             Reset View
           </button>
 
+          <div className="flex items-center gap-2 rounded-full border border-[color:var(--border)] bg-[var(--surface)] px-3 py-1.5">
+            <label
+              htmlFor="camera-trajectory"
+              className="text-xs text-[color:var(--muted2)]"
+            >
+              Camera
+            </label>
+            <select
+              id="camera-trajectory"
+              value={cameraTrajectory}
+              onChange={(e) =>
+                setCameraTrajectory(e.target.value as CameraTrajectory)
+              }
+              className="bg-transparent text-xs text-[color:var(--app-fg)] outline-none"
+            >
+              {CAMERA_TRAJECTORY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <button
             type="button"
             disabled={!canRun}
-            onClick={() => runMultiview(displayOrbit)}
+            onClick={() => runMultiview()}
             className="rounded-full bg-[var(--primary-bg)] text-[var(--primary-fg)] px-4 py-2 text-xs font-semibold hover:bg-[var(--primary-bg-hover)] transition disabled:opacity-40 disabled:hover:bg-[var(--primary-bg)] disabled:cursor-not-allowed"
           >
             {running ? "Generating…" : "Generate Multiview"}
