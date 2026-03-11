@@ -251,9 +251,47 @@ def get_custom_orbit_w2cs(
         clockwise=clockwise,
     )
 
+def get_arc_vertical_w2cs(
+    ref_w2c: torch.Tensor,
+    lookat: torch.Tensor,
+    up: torch.Tensor | None,
+    num_frames: int,
+    endpoint: bool = False,
+    degree: float = 360.0,
+    clockwise: bool = True,
+) -> torch.Tensor:
+    ref_c2w = torch.linalg.inv(ref_w2c)
+    ref_position = ref_c2w[:3, 3]
+
+    # Default up matches the repo's convention.
+    if up is None:
+        up = -ref_c2w[:3, 1]
+
+    # Camera forward and right at the reference pose.
+    forward = torch.nn.functional.normalize(lookat - ref_position, dim=0)
+    right = torch.nn.functional.normalize(torch.cross(forward, up, dim=0), dim=0)
+
+    thetas = (
+        torch.linspace(0.0, torch.pi * degree / 180, num_frames, device=ref_w2c.device)
+        if endpoint else
+        torch.linspace(0.0, torch.pi * degree / 180, num_frames + 1, device=ref_w2c.device)[:-1]
+    )
+    if not clockwise:
+        thetas = -thetas
+
+    offsets = ref_position - lookat
+    R = roma.rotvec_to_rotmat(thetas[:, None] * right[None])  # rotate around RIGHT axis
+    positions = torch.einsum("nij,j->ni", R, offsets) + lookat
+
+    # Rotate the up vector too, so camera roll stays stable over the arc.
+    ups = torch.einsum("nij,j->ni", R, up)
+
+    return get_lookat_w2cs(positions, lookat, ups)
+
 def get_preset_pose_fov(
     option: Literal[
         "orbit",
+        "vertical-orbit",
         "spiral",
         "lemniscate",
         "zoom-in",
@@ -335,6 +373,16 @@ def get_preset_pose_fov(
                 )
             ).numpy()
 
+        fovs = np.full((num_frames,), fov)
+    
+    elif option == "vertical-orbit":
+        poses = torch.linalg.inv(
+            get_arc_vertical_w2cs(
+                start_w2c, look_at, up_direction,
+                num_frames=num_frames, endpoint=False,
+                degree=360.0,
+            )
+        ).numpy()
         fovs = np.full((num_frames,), fov)
     
     elif option == "linear-sides":

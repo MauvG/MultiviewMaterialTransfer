@@ -7,10 +7,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      // "/api": "http://134.226.35.107:8000",
-      // "/outputs": "http://134.226.35.107:8000",
-      "/api": "http://91.203.49.76:23137/",
-      "/outputs": "http://91.203.49.76:23137/",
+      "/api": "http://134.226.35.107:8000",
+      "/outputs": "http://134.226.35.107:8000",
+      // "/api": "http://91.203.49.76:23137/",
+      // "/outputs": "http://91.203.49.76:23137/",
     },
   },
 });
