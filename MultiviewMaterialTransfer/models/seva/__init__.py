@@ -398,7 +398,7 @@ class SEVAPipeline(nn.Module):
         grayscale=False,
         add_front=True,
         add_back=False,
-        camera_trajectory="orbit",
+        camera_trajectory="vertical-orbit",
         zoom_factor=None,
     ):
         self.vae.to(device)
@@ -576,7 +576,7 @@ class SEVAPipeline(nn.Module):
         elevation,
         distance=2.0,
         fov=0.7,
-        camera_trajectory="orbit",
+        camera_trajectory="vertical-orbit",
         bg_color="white",
         zoom_factor=None,
         num_inference_steps=50,
