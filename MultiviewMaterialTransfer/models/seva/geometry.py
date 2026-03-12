@@ -175,7 +175,6 @@ def rt_to_mat4(R: torch.Tensor, t: torch.Tensor, s: torch.Tensor | None = None) 
 def get_preset_pose_fov(
     option: Literal[
         "orbit",
-        "vertical-orbit",
         "spiral",
         "lemniscate",
         "zoom-in",
@@ -237,19 +236,6 @@ def get_preset_pose_fov(
             )
         ).numpy()
         fovs = np.full((num_frames,), fov)
-
-    if option == "vertical-orbit":
-        poses = torch.linalg.inv(
-            get_arc_vertical_w2cs(
-                start_w2c,
-                look_at,
-                up_direction,
-                num_frames=num_frames,
-                endpoint=False,
-            )
-        ).numpy()
-        fovs = np.full((num_frames,), fov)
-
     elif option == "linear-sides":
         poses = torch.linalg.inv(
             get_linear_sides_w2cs(
@@ -569,54 +555,6 @@ def get_arc_horizontal_w2cs(
         + lookat
     )
     return get_lookat_w2cs(positions, lookat, up, face_off=face_off)
-
-
-def get_arc_vertical_w2cs(
-    ref_w2c: torch.Tensor,
-    lookat: torch.Tensor,
-    up: torch.Tensor | None,
-    num_frames: int,
-    clockwise: bool = True,
-    face_off: bool = False,
-    endpoint: bool = False,
-    degree: float = 360.0,
-    ref_up_shift: float = 0.0,
-    ref_radius_scale: float = 1.0,
-    **_,
-) -> torch.Tensor:
-    ref_c2w = torch.linalg.inv(ref_w2c)
-    ref_position = ref_c2w[:3, 3]
-
-    if up is None:
-        up = -ref_c2w[:3, 1]
-    assert up is not None
-    up = F.normalize(up, dim=0)
-
-    ref_position += up * ref_up_shift
-    ref_position *= ref_radius_scale
-
-    forward = F.normalize(lookat - ref_position, dim=0)
-    right = F.normalize(torch.cross(forward, up, dim=0), dim=0)
-
-    thetas = (
-        torch.linspace(0.0, torch.pi * degree / 180, num_frames, device=ref_w2c.device)
-        if endpoint
-        else torch.linspace(0.0, torch.pi * degree / 180, num_frames + 1, device=ref_w2c.device)[:-1]
-    )
-    if not clockwise:
-        thetas = -thetas
-
-    rot_mats = roma.rotvec_to_rotmat(thetas[:, None] * right[None])
-
-    positions = torch.einsum(
-        "nij,j->ni",
-        rot_mats,
-        ref_position - lookat,
-    ) + lookat
-
-    rotated_up = torch.einsum("nij,j->ni", rot_mats, up)
-
-    return get_lookat_w2cs(positions, lookat, rotated_up, face_off=face_off)
 
 
 def get_lemniscate_w2cs(

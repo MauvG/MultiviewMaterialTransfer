@@ -211,6 +211,26 @@ async function fetchFramesAsObjectUrls(srcs: string[]) {
   );
 }
 
+const CAMERA_TRAJECTORY_OPTIONS: {
+  value: CameraTrajectory;
+  label: string;
+}[] = [
+  { value: "orbit", label: "Orbit" },
+  { value: "spiral", label: "Spiral" },
+  { value: "lemniscate", label: "Lemniscate" },
+  { value: "roll", label: "Roll" },
+  { value: "spiral-top", label: "Spiral Top" },
+  { value: "spiral-down", label: "Spiral Down" },
+  { value: "spiral-zoom-in", label: "Spiral Zoom In" },
+  { value: "spiral-zoom-out", label: "Spiral Zoom Out" },
+  { value: "vertical-orbit-180", label: "Vertical Orbit 180" },
+  { value: "vertical-orbit-360", label: "Vertical Orbit 360" },
+  { value: "orbit-sinusoidal", label: "Orbit Sinusoidal" },
+  { value: "strafe-right", label: "Strafe Right" },
+  { value: "strafe-left", label: "Strafe Left" },
+  { value: "close-zoom", label: "Close Zoom" },
+];
+
 export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     if (typeof window === "undefined") return "dark";
@@ -247,6 +267,28 @@ export default function Home() {
     return items;
   }, []);
 
+  const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
+  const cameraMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onPointerDown = (e: MouseEvent) => {
+      if (!cameraMenuRef.current?.contains(e.target as Node)) {
+        setCameraMenuOpen(false);
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCameraMenuOpen(false);
+    };
+
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
   const [objectImage, setObjectImage] = useState<string | null>(null);
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [activeRefId, setActiveRefId] = useState<string>("none");
@@ -268,26 +310,6 @@ export default function Home() {
   const objectUrlRef = useRef<string | null>(null);
   const objFrameUrlsRef = useRef<string[]>([]);
   const predFrameUrlsRef = useRef<string[]>([]);
-
-  const CAMERA_TRAJECTORY_OPTIONS: {
-    value: CameraTrajectory;
-    label: string;
-  }[] = [
-    { value: "orbit", label: "Orbit" },
-    { value: "spiral", label: "Spiral" },
-    { value: "lemniscate", label: "Lemniscate" },
-    { value: "roll", label: "Roll" },
-    { value: "spiral-top", label: "Spiral Top" },
-    { value: "spiral-down", label: "Spiral Down" },
-    { value: "spiral-zoom-in", label: "Spiral Zoom In" },
-    { value: "spiral-zoom-out", label: "Spiral Zoom Out" },
-    { value: "vertical-orbit-180", label: "Vertical Orbit 180" },
-    { value: "vertical-orbit-360", label: "Vertical Orbit 360" },
-    { value: "orbit-sinusoidal", label: "Orbit Sinusoidal" },
-    { value: "strafe-right", label: "Strafe Right" },
-    { value: "strafe-left", label: "Strafe Left" },
-    { value: "close-zoom", label: "Close Zoom" },
-  ];
 
   const [cameraTrajectory, setCameraTrajectory] =
     useState<CameraTrajectory>("orbit");
@@ -780,7 +802,7 @@ export default function Home() {
   return (
     <div className="h-screen w-screen bg-[var(--app-bg)] text-[color:var(--app-fg)] flex flex-col overflow-hidden transition-colors duration-200">
       {/* Top bar */}
-      <div className="h-14 border-b border-[color:var(--border)] bg-[var(--panel-bg)] backdrop-blur px-4 flex items-center gap-2">
+      <div className="relative z-40 h-14 border-b border-[color:var(--border)] bg-[var(--panel-bg)] backdrop-blur px-4 flex items-center gap-2 overflow-visible">
         <div className="text-sm font-semibold tracking-tight">
           Material Transfer Studio
         </div>
@@ -840,27 +862,57 @@ export default function Home() {
             Reset View
           </button>
 
-          <div className="flex items-center gap-2 rounded-full border border-[color:var(--border)] bg-[var(--surface)] px-3 py-1.5">
-            <label
-              htmlFor="camera-trajectory"
-              className="text-xs text-[color:var(--muted2)]"
+          <div ref={cameraMenuRef} className="relative z-50">
+            <button
+              type="button"
+              onClick={() => setCameraMenuOpen((v) => !v)}
+              className="flex h-[34px] min-w-[180px] items-center justify-between rounded-full border border-[color:var(--border)] bg-[var(--surface)] pl-3 pr-3 text-xs text-[color:var(--muted2)] hover:bg-[var(--surface-hover)] transition outline-none focus:border-[color:var(--border-strong)]"
+              aria-haspopup="listbox"
+              aria-expanded={cameraMenuOpen}
+              title="Camera Path"
             >
-              Camera
-            </label>
-            <select
-              id="camera-trajectory"
-              value={cameraTrajectory}
-              onChange={(e) =>
-                setCameraTrajectory(e.target.value as CameraTrajectory)
-              }
-              className="bg-transparent text-xs text-[color:var(--app-fg)] outline-none"
-            >
-              {CAMERA_TRAJECTORY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+              <span className="truncate">
+                {
+                  CAMERA_TRAJECTORY_OPTIONS.find(
+                    (opt) => opt.value === cameraTrajectory,
+                  )?.label
+                }
+              </span>
+              <span className="ml-2 shrink-0 text-[10px] text-[color:var(--muted)]">
+                ▾
+              </span>
+            </button>
+
+            {cameraMenuOpen && (
+              <div className="absolute right-0 top-[calc(100%+8px)] z-[60] w-[220px] overflow-hidden rounded-2xl border border-[color:var(--border)] bg-[var(--menu-bg)] p-1 shadow-[0_12px_40px_rgba(0,0,0,0.24)] backdrop-blur-xl">
+                <div className="max-h-72 overflow-y-auto">
+                  {CAMERA_TRAJECTORY_OPTIONS.map((opt) => {
+                    const active = opt.value === cameraTrajectory;
+
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => {
+                          setCameraTrajectory(opt.value);
+                          setCameraMenuOpen(false);
+                        }}
+                        className={[
+                          "flex w-full items-center rounded-xl px-3 py-2 text-left text-xs transition",
+                          active
+                            ? "bg-[var(--surface-active)] text-[color:var(--app-fg)]"
+                            : "text-[color:var(--muted2)] hover:bg-[var(--surface-hover)]",
+                        ].join(" ")}
+                        role="option"
+                        aria-selected={active}
+                      >
+                        <span className="truncate">{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <button
@@ -980,212 +1032,6 @@ export default function Home() {
                       Right-click to upload image
                     </div>
                   )}
-                </div>
-
-                <div className="pointer-events-none absolute inset-0 grid place-items-center z-20">
-                  {(() => {
-                    const boxSize = 320;
-                    const axisSize = 268;
-                    const orbitRingSize = 188;
-                    const gizmoOpacity =
-                      isGizmoHovered || activeOrbitAxis !== null ? 1 : 0.28;
-
-                    const { axis: gizmoAxis, deg: gizmoDeg } = quatToAxisAngle(
-                      displayOrbit.quat,
-                    );
-                    const gizmoTransform = `rotate3d(${gizmoAxis[0]}, ${gizmoAxis[1]}, ${gizmoAxis[2]}, ${gizmoDeg}deg)`;
-
-                    const strokeForAxis = (axis: OrbitAxis) => {
-                      if (axis === "x") {
-                        return activeOrbitAxis === "x"
-                          ? "var(--axis-x-active)"
-                          : "var(--axis-x)";
-                      }
-                      if (axis === "y") {
-                        return activeOrbitAxis === "y"
-                          ? "var(--axis-y-active)"
-                          : "var(--axis-y)";
-                      }
-                      return activeOrbitAxis === "z"
-                        ? "var(--axis-z-active)"
-                        : "var(--axis-z)";
-                    };
-
-                    const widthForAxis = (axis: OrbitAxis) =>
-                      activeOrbitAxis === axis ? 5 : 3;
-
-                    return (
-                      <div
-                        className="relative transition-opacity duration-200 ease-out"
-                        style={{
-                          width: boxSize,
-                          height: boxSize,
-                          perspective: "1600px",
-                          opacity: gizmoOpacity,
-                        }}
-                      >
-                        <div
-                          className="absolute inset-0"
-                          style={{
-                            transformStyle: "preserve-3d",
-                            transform: "rotateX(-24deg) rotateY(30deg)",
-                          }}
-                        >
-                          <div
-                            className="absolute inset-0"
-                            style={{
-                              transformStyle: "preserve-3d",
-                              transform: gizmoTransform,
-                              willChange: "transform",
-                            }}
-                          >
-                            {/* X axis ring - red */}
-                            <div
-                              role="button"
-                              tabIndex={-1}
-                              className="absolute left-1/2 top-1/2 pointer-events-auto"
-                              style={{
-                                width: axisSize,
-                                height: axisSize,
-                                transformStyle: "preserve-3d",
-                                transform:
-                                  "translate3d(-50%, -50%, 0px) rotateY(90deg)",
-                                cursor: "grab",
-                              }}
-                              onPointerEnter={() => setIsGizmoHovered(true)}
-                              onPointerLeave={() => setIsGizmoHovered(false)}
-                              onPointerDown={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                startAxisDrag("x", e.clientX, e.clientY);
-                              }}
-                            >
-                              <svg
-                                width={axisSize}
-                                height={axisSize}
-                                viewBox={`0 0 ${axisSize} ${axisSize}`}
-                                className="overflow-visible"
-                              >
-                                <circle
-                                  cx={axisSize / 2}
-                                  cy={axisSize / 2}
-                                  r={axisSize / 2 - 6}
-                                  fill="none"
-                                  stroke={strokeForAxis("x")}
-                                  strokeWidth={widthForAxis("x")}
-                                  style={{ pointerEvents: "stroke" }}
-                                />
-                              </svg>
-                            </div>
-
-                            {/* Y axis ring - green */}
-                            <div
-                              role="button"
-                              tabIndex={-1}
-                              className="absolute left-1/2 top-1/2 pointer-events-auto"
-                              style={{
-                                width: axisSize,
-                                height: axisSize,
-                                transformStyle: "preserve-3d",
-                                transform:
-                                  "translate3d(-50%, -50%, 0px) rotateX(90deg)",
-                                cursor: "grab",
-                              }}
-                              onPointerEnter={() => setIsGizmoHovered(true)}
-                              onPointerLeave={() => setIsGizmoHovered(false)}
-                              onPointerDown={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                startAxisDrag("y", e.clientX, e.clientY);
-                              }}
-                            >
-                              <svg
-                                width={axisSize}
-                                height={axisSize}
-                                viewBox={`0 0 ${axisSize} ${axisSize}`}
-                                className="overflow-visible"
-                              >
-                                <circle
-                                  cx={axisSize / 2}
-                                  cy={axisSize / 2}
-                                  r={axisSize / 2 - 6}
-                                  fill="none"
-                                  stroke={strokeForAxis("y")}
-                                  strokeWidth={widthForAxis("y")}
-                                  style={{ pointerEvents: "stroke" }}
-                                />
-                              </svg>
-                            </div>
-
-                            {/* Z axis ring - blue */}
-                            <div
-                              role="button"
-                              tabIndex={-1}
-                              className="absolute left-1/2 top-1/2 pointer-events-auto"
-                              style={{
-                                width: axisSize,
-                                height: axisSize,
-                                transformStyle: "preserve-3d",
-                                transform: "translate3d(-50%, -50%, 0px)",
-                                cursor: "grab",
-                              }}
-                              onPointerEnter={() => setIsGizmoHovered(true)}
-                              onPointerLeave={() => setIsGizmoHovered(false)}
-                              onPointerDown={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                startAxisDrag("z", e.clientX, e.clientY);
-                              }}
-                            >
-                              <svg
-                                width={axisSize}
-                                height={axisSize}
-                                viewBox={`0 0 ${axisSize} ${axisSize}`}
-                                className="overflow-visible"
-                              >
-                                <circle
-                                  cx={axisSize / 2}
-                                  cy={axisSize / 2}
-                                  r={axisSize / 2 - 6}
-                                  fill="none"
-                                  stroke={strokeForAxis("z")}
-                                  strokeWidth={widthForAxis("z")}
-                                  style={{ pointerEvents: "stroke" }}
-                                />
-                              </svg>
-                            </div>
-
-                            {/* white orbit ring */}
-                            <div
-                              className="absolute left-1/2 top-1/2 rounded-full"
-                              style={{
-                                width: orbitRingSize,
-                                height: orbitRingSize,
-                                border: "2px solid var(--orbit)",
-                                transformStyle: "preserve-3d",
-                                transform:
-                                  "translate3d(-50%, -50%, -4px) rotateX(90deg)",
-                                opacity: 0.28,
-                              }}
-                            />
-
-                            <div
-                              className="absolute left-1/2 top-1/2 rounded-full"
-                              style={{
-                                width: orbitRingSize,
-                                height: orbitRingSize,
-                                border: "2px solid var(--orbit-strong)",
-                                transformStyle: "preserve-3d",
-                                transform:
-                                  "translate3d(-50%, -50%, 4px) rotateX(90deg)",
-                                opacity: 0.96,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
               </button>
 
@@ -1407,6 +1253,8 @@ export default function Home() {
           --axis-x-active:#ff8a8a;
           --axis-y-active:#7ef39d;
           --axis-z-active:#8bc4ff;
+
+          --menu-bg:rgba(15,16,22,0.92);
         }
 
         :root[data-theme="light"]{
@@ -1459,6 +1307,8 @@ export default function Home() {
           --axis-x-active:#f06262;
           --axis-y-active:#4dcc73;
           --axis-z-active:#5b98ea;
+
+          --menu-bg:rgba(255,255,255,0.92);
         }
       `}</style>
     </div>
