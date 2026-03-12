@@ -318,6 +318,10 @@ export default function Home() {
   const [autoSpin, setAutoSpin] = useState(false);
   const [running, setRunning] = useState(false);
 
+  const [generateTarget, setGenerateTarget] = useState<"reference" | "object">(
+    "reference",
+  );
+
   const [orbitDraft, setOrbitDraft] = useState<OrbitSpec | null>(null);
   const [orbitConfirmed, setOrbitConfirmed] = useState<OrbitSpec | null>(null);
 
@@ -402,7 +406,7 @@ export default function Home() {
     setPredFrames([]);
     setDisplayFrameKind(null);
     setYaw01(0);
-    setAutoSpin(false);
+    setAutoSpin(true);
   };
 
   const setReference = (src: string | null, id: string) => {
@@ -414,18 +418,16 @@ export default function Home() {
 
   const onObjectFile = async (file: File | null) => {
     if (!file) return;
-
     const url = URL.createObjectURL(file);
-
-    if (objectUrlRef.current?.startsWith("blob:")) {
-      URL.revokeObjectURL(objectUrlRef.current);
-    }
     objectUrlRef.current = url;
+    await setObjectFromSrc(url);
+  };
 
-    setObjectImage(url);
+  const setObjectFromSrc = async (src: string) => {
+    setObjectImage(src);
 
     try {
-      const size = await getImageSize(url);
+      const size = await getImageSize(src);
       setObjectRenderSize(size);
     } catch (e) {
       console.error(e);
@@ -437,15 +439,24 @@ export default function Home() {
 
   const pickReferenceUpload = () => refUploadInputRef.current?.click();
 
-  const onReferenceFile = (file: File | null) => {
+  const onReferenceFile = async (file: File | null) => {
     if (!file) return;
+
     const url = URL.createObjectURL(file);
+
+    if (generateTarget === "object") {
+      objectUrlRef.current = url;
+      await setObjectFromSrc(url);
+      return;
+    }
+
     const item: RefItem = {
       id: `upl_${crypto.randomUUID()}`,
       name: filenameToName(file.name || "Uploaded"),
       src: url,
       kind: "uploaded",
     };
+
     setCustomRefs((prev) => [item, ...prev]);
     setReference(item.src, item.id);
   };
@@ -514,20 +525,34 @@ export default function Home() {
 
   useEffect(() => {
     if (!autoSpin || !hasFrames) return;
+
+    const SPIN_FPS = 16;
+    const msPerFrame = 1000 / SPIN_FPS;
+
     let raf = 0;
     let last = performance.now();
+    let acc = 0;
+
     const tick = (t: number) => {
-      const dt = (t - last) / 1000;
+      const dt = t - last;
       last = t;
-      setYaw01((y) => mod1(y + dt * (1 / 6)));
+      acc += dt;
+
+      while (acc >= msPerFrame) {
+        acc -= msPerFrame;
+        stepFrame(1);
+      }
+
       raf = requestAnimationFrame(tick);
     };
+
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [autoSpin, hasFrames]);
+  }, [autoSpin, hasFrames, frameCount, frameIndex]);
 
   const generateReference = async () => {
     if (!refPrompt.trim()) return;
+
     setGeneratingRef(true);
     try {
       const res = await fetch("/api/generate-image", {
@@ -541,19 +566,26 @@ export default function Home() {
           seed: Math.floor(Math.random() * 1e9),
         }),
       });
+
       if (!res.ok) throw new Error(await res.text());
+
       const data = await res.json();
       const src = data.image_url as string;
 
-      const item: RefItem = {
-        id: `gen_${data.job_id ?? crypto.randomUUID()}`,
-        name: filenameToName(refPrompt.slice(0, 36) || "Generated"),
-        src,
-        kind: "generated",
-      };
+      if (generateTarget === "object") {
+        await setObjectFromSrc(src);
+      } else {
+        const item: RefItem = {
+          id: `gen_${data.job_id ?? crypto.randomUUID()}`,
+          name: filenameToName(refPrompt.slice(0, 36) || "Generated"),
+          src,
+          kind: "generated",
+        };
 
-      setCustomRefs((prev) => [item, ...prev]);
-      setReference(item.src, item.id);
+        setCustomRefs((prev) => [item, ...prev]);
+        setReference(item.src, item.id);
+      }
+
       setRefPrompt("");
     } catch (e) {
       console.error(e);
@@ -1092,9 +1124,37 @@ export default function Home() {
           <input
             value={refPrompt}
             onChange={(e) => setRefPrompt(e.target.value)}
-            placeholder="Generate reference…"
+            placeholder="Generate image…"
             className="flex-1 rounded-xl border border-[color:var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[color:var(--app-fg)] placeholder:text-[color:var(--placeholder)] outline-none focus:border-[color:var(--border-strong)]"
           />
+
+          <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[var(--surface)] p-1">
+            <button
+              type="button"
+              onClick={() => setGenerateTarget("reference")}
+              className={[
+                "rounded-lg px-3 py-2 text-sm transition",
+                generateTarget === "reference"
+                  ? "bg-[var(--surface-active)] text-[color:var(--app-fg)]"
+                  : "text-[color:var(--muted2)] hover:bg-[var(--surface-hover)]",
+              ].join(" ")}
+            >
+              Reference
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setGenerateTarget("object")}
+              className={[
+                "rounded-lg px-3 py-2 text-sm transition",
+                generateTarget === "object"
+                  ? "bg-[var(--surface-active)] text-[color:var(--app-fg)]"
+                  : "text-[color:var(--muted2)] hover:bg-[var(--surface-hover)]",
+              ].join(" ")}
+            >
+              Object
+            </button>
+          </div>
 
           <button
             type="button"
