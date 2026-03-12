@@ -200,15 +200,51 @@ function revokeObjectUrls(urls: string[]) {
   }
 }
 
+async function fetchWithRetry(
+  src: string,
+  retries = 12,
+  delayMs = 1000,
+): Promise<Response> {
+  let lastErr: unknown;
+
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(src, { cache: "no-store" });
+      if (res.ok) return res;
+      lastErr = new Error(`HTTP ${res.status} for ${src}`);
+    } catch (e) {
+      lastErr = e;
+    }
+
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(`Failed to fetch ${src}`);
+}
+
 async function fetchFramesAsObjectUrls(srcs: string[]) {
-  return Promise.all(
+  const settled = await Promise.allSettled(
     srcs.map(async (src) => {
-      const res = await fetch(src, { cache: "force-cache" });
-      if (!res.ok) throw new Error(`Failed to fetch frame: ${src}`);
+      const res = await fetchWithRetry(src, 12, 1000);
       const blob = await res.blob();
       return URL.createObjectURL(blob);
     }),
   );
+
+  const ok = settled
+    .filter(
+      (r): r is PromiseFulfilledResult<string> => r.status === "fulfilled",
+    )
+    .map((r) => r.value);
+
+  const failed = settled.filter((r) => r.status === "rejected");
+  if (failed.length) {
+    console.warn(`Failed to fetch ${failed.length} frame(s)`);
+  }
+
+  return ok;
 }
 
 const CAMERA_TRAJECTORY_OPTIONS: {
