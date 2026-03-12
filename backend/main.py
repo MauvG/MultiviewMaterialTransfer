@@ -177,8 +177,8 @@ async def multiview_transfer(
     # downscale_image_in_place(ref_path, max_side=1024)
     # downscale_image_in_place(obj_path, max_side=1024)
 
-    # if camera_trajectory not in ALLOWED_CAMERA_TRAJECTORIES:
-    camera_trajectory = "vertical-orbit"
+    if camera_trajectory not in ALLOWED_CAMERA_TRAJECTORIES:
+        camera_trajectory = "orbit"
 
     with GPU_LOCK, torch.inference_mode():
         get_unload_z_pipe()()
