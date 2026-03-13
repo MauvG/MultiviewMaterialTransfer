@@ -37,6 +37,8 @@ B = 3
 # H = 256
 # W = 256
 
+torch.backends.cudnn.benchmark = True
+
 def load_pipeline(
     device="cuda",
     activate_layers=True,
@@ -54,8 +56,6 @@ def load_pipeline(
     image_encoder = CLIPConditioner().to(device)
     denoiser = DiscreteDenoiser(num_idx=1000, device=device)
     guider_mid = MultiviewCFG(3.0)
-    # guider_mid = MultiviewCFG(2.0)
-    # guider_mid = MultiviewCFG(1.2)
     guider = MultiviewCFG(1.2)
 
     pipeline = SEVAPipeline(
@@ -66,28 +66,23 @@ def load_pipeline(
         guider=guider,
         guider_mid=guider_mid,
     )
+
     if activate_layers:
         assert swapping_config is not None or resume_from is not None or manual_parameters is not None, (
             "Either swapping_config or resume_from or manual_parameters must be provided when activate_layers is True."
         )
         pipeline.activate_layers(
-            swapping_config=swapping_config, resume_from=resume_from, manual_parameters=manual_parameters
+            swapping_config=swapping_config,
+            resume_from=resume_from,
+            manual_parameters=manual_parameters,
         )
 
     pipeline.to(device)
     pipeline.vae.to(device)
     pipeline.image_encoder.to(device)
 
-    if device == "cuda":
-        try:
-            pipeline.unet = torch.compile(
-                pipeline.unet,
-                mode="max-autotune",
-                fullgraph=False,
-            )
-            print("Compiled UNet with torch.compile")
-        except Exception as e:
-            print(f"torch.compile skipped: {e}")
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
 
     return pipeline
 
@@ -550,9 +545,19 @@ class SEVAPipeline(nn.Module):
             device=device,
         )
 
-        latents = torch.nn.functional.pad(self.vae.encode(all_imgs[input_masks], 1), (0, 0, 0, 0, 0, 1), value=1.0)
+        with torch.amp.autocast("cuda", dtype=torch.float16):
+            latents = torch.nn.functional.pad(
+                self.vae.encode(all_imgs[input_masks], 1),
+                (0, 0, 0, 0, 0, 1),
+                value=1.0,
+            )
 
-        c_crossattn = repeat(self.image_encoder(all_imgs[input_masks]).mean(0), "d -> n 1 d", n=t).clone()
+            c_crossattn = repeat(
+                self.image_encoder(all_imgs[input_masks]).mean(0),
+                "d -> n 1 d",
+                n=t,
+            ).clone()
+
         uc_crossattn = torch.zeros_like(
             c_crossattn,
             device=device,
@@ -622,8 +627,6 @@ class SEVAPipeline(nn.Module):
 
         total_sampling_steps = max(1, num_sigmas - 1)
 
-        total_sampling_steps = max(1, num_sigmas - 1)
-
         for i in tqdm.tqdm(range(total_sampling_steps), desc="Sampling", total=total_sampling_steps):
             if progress_callback is not None:
                 try:
@@ -635,21 +638,30 @@ class SEVAPipeline(nn.Module):
             sigma = s_in * sigmas[i]
             next_sigma = s_in * sigmas[i + 1]
             sigma_hat = sigma * (gamma + 1.0) + 1e-6
-            eps = torch.randn_like(x[T : 2 * T], device=self.unet.device)
+
+            eps = torch.randn_like(x[T:2 * T], device=self.unet.device)
             eps = repeat(eps, "n ... -> (b n) ...", b=B)
             x = x + eps * append_dims(sigma_hat**2 - sigma**2, x.ndim) ** 0.5
 
-            denoised_cond = self.denoiser(self.unet, x, sigma_hat, cond, num_frames=T, batch_size=B)
-            denoised_uncond = self.denoiser(self.unet, x, sigma_hat, uncond, num_frames=T, batch_size=B)
-            denoised = torch.cat((denoised_uncond, denoised_cond), 0)
+            x_in, sigma_in, c_in = self.prepare_inputs(x, sigma_hat, cond, uncond)
+            denoised = self.denoiser(
+                self.unet,
+                x_in,
+                sigma_in,
+                c_in,
+                num_frames=T,
+                batch_size=B,
+            )
 
             denoised_mid = self.guider_mid(
                 denoised, sigma_hat, cfg_scale_mid, c2w=c2w, K=k, input_frame_mask=input_mask
             )
 
-            denoised = self.guider(denoised, sigma_hat, 2.0, c2w=c2w, K=k, input_frame_mask=input_mask)
+            denoised = self.guider(
+                denoised, sigma_hat, 2.0, c2w=c2w, K=k, input_frame_mask=input_mask
+            )
 
-            denoised[T : 2 * T] = denoised_mid[T : 2 * T]
+            denoised[T:2 * T] = denoised_mid[T:2 * T]
 
             d = to_d(x, sigma_hat, denoised)
             dt = append_dims(next_sigma - sigma_hat, x.ndim)
