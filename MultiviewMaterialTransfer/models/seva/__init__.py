@@ -581,116 +581,116 @@ class SEVAPipeline(nn.Module):
         return {"cond": cond, "uncond": uncond, "c2w": c2w, "curr_Ks": all_Ks, "input_masks": input_masks}
 
     @torch.no_grad()
-def infer_demo(
-    self,
-    input_image_path,
-    reference_image_path,
-    elevation,
-    distance=2.0,
-    fov=0.7,
-    camera_trajectory="vertical-orbit",
-    bg_color="white",
-    zoom_factor=None,
-    num_inference_steps=50,
-    cfg_scale=3.0,
-    cfg_scale_mid=3.0,
-    main_stream="combined",
-    progress_callback=None,
-):
-    import time
-
-    t0 = time.perf_counter()
-
-    self.guider_mid = MultiviewCFG(cfg_scale)
-
-    object_conditioning = self.encode_conditioning(
+    def infer_demo(
+        self,
         input_image_path,
-        elevation_deg=elevation,
-        distance=distance,
-        fov=fov,
-        camera_trajectory=camera_trajectory,
-        bg_color=bg_color,
-        zoom_factor=zoom_factor,
-    )
-    t1 = time.perf_counter()
-
-    reference_conditioning = self.encode_conditioning(
         reference_image_path,
-        elevation_deg=elevation,
-        distance=distance,
-        fov=fov,
-        camera_trajectory=camera_trajectory,
-        bg_color=bg_color,
-        zoom_factor=zoom_factor,
-    )
-    t2 = time.perf_counter()
+        elevation,
+        distance=2.0,
+        fov=0.7,
+        camera_trajectory="vertical-orbit",
+        bg_color="white",
+        zoom_factor=None,
+        num_inference_steps=50,
+        cfg_scale=3.0,
+        cfg_scale_mid=3.0,
+        main_stream="combined",
+        progress_callback=None,
+    ):
+        import time
 
-    cond, uncond, c2w, k, input_mask = self.get_combined_conditioning(
-        object_conditioning, reference_conditioning, main_stream, device=self.unet.device
-    )
+        t0 = time.perf_counter()
 
-    x, s_in, sigmas, num_sigmas = self.prepare_sampling_loop(num_inference_steps, self.unet.device)
-    total_sampling_steps = max(1, num_sigmas - 1)
-    t3 = time.perf_counter()
+        self.guider_mid = MultiviewCFG(cfg_scale)
 
-    for i in tqdm.tqdm(range(total_sampling_steps), desc="Sampling", total=total_sampling_steps):
-        if progress_callback is not None and ((i + 1) % 2 == 0 or i == total_sampling_steps - 1):
-            try:
-                progress_callback(i + 1, total_sampling_steps)
-            except Exception:
-                pass
-
-        gamma = 0.0
-        sigma = s_in * sigmas[i]
-        next_sigma = s_in * sigmas[i + 1]
-        sigma_hat = sigma * (gamma + 1.0) + 1e-6
-
-        eps = torch.randn_like(x[T:2 * T], device=self.unet.device)
-        eps = repeat(eps, "n ... -> (b n) ...", b=B)
-        x = x + eps * append_dims(sigma_hat**2 - sigma**2, x.ndim) ** 0.5
-
-        denoised_cond = self.denoiser(
-            self.unet,
-            x,
-            sigma_hat,
-            cond,
-            num_frames=T,
-            batch_size=B,
+        object_conditioning = self.encode_conditioning(
+            input_image_path,
+            elevation_deg=elevation,
+            distance=distance,
+            fov=fov,
+            camera_trajectory=camera_trajectory,
+            bg_color=bg_color,
+            zoom_factor=zoom_factor,
         )
-        denoised_uncond = self.denoiser(
-            self.unet,
-            x,
-            sigma_hat,
-            uncond,
-            num_frames=T,
-            batch_size=B,
-        )
-        denoised = torch.cat((denoised_uncond, denoised_cond), 0)
+        t1 = time.perf_counter()
 
-        denoised_mid = self.guider_mid(
-            denoised, sigma_hat, cfg_scale_mid, c2w=c2w, K=k, input_frame_mask=input_mask
+        reference_conditioning = self.encode_conditioning(
+            reference_image_path,
+            elevation_deg=elevation,
+            distance=distance,
+            fov=fov,
+            camera_trajectory=camera_trajectory,
+            bg_color=bg_color,
+            zoom_factor=zoom_factor,
+        )
+        t2 = time.perf_counter()
+
+        cond, uncond, c2w, k, input_mask = self.get_combined_conditioning(
+            object_conditioning, reference_conditioning, main_stream, device=self.unet.device
         )
 
-        denoised = self.guider(
-            denoised, sigma_hat, 2.0, c2w=c2w, K=k, input_frame_mask=input_mask
-        )
+        x, s_in, sigmas, num_sigmas = self.prepare_sampling_loop(num_inference_steps, self.unet.device)
+        total_sampling_steps = max(1, num_sigmas - 1)
+        t3 = time.perf_counter()
 
-        denoised[T:2 * T] = denoised_mid[T:2 * T]
+        for i in tqdm.tqdm(range(total_sampling_steps), desc="Sampling", total=total_sampling_steps):
+            if progress_callback is not None and ((i + 1) % 2 == 0 or i == total_sampling_steps - 1):
+                try:
+                    progress_callback(i + 1, total_sampling_steps)
+                except Exception:
+                    pass
 
-        d = to_d(x, sigma_hat, denoised)
-        dt = append_dims(next_sigma - sigma_hat, x.ndim)
+            gamma = 0.0
+            sigma = s_in * sigmas[i]
+            next_sigma = s_in * sigmas[i + 1]
+            sigma_hat = sigma * (gamma + 1.0) + 1e-6
 
-        x = x + dt * d
+            eps = torch.randn_like(x[T:2 * T], device=self.unet.device)
+            eps = repeat(eps, "n ... -> (b n) ...", b=B)
+            x = x + eps * append_dims(sigma_hat**2 - sigma**2, x.ndim) ** 0.5
 
-    t4 = time.perf_counter()
-    samples = self.decode_latents_to_pil(x)
-    t5 = time.perf_counter()
+            denoised_cond = self.denoiser(
+                self.unet,
+                x,
+                sigma_hat,
+                cond,
+                num_frames=T,
+                batch_size=B,
+            )
+            denoised_uncond = self.denoiser(
+                self.unet,
+                x,
+                sigma_hat,
+                uncond,
+                num_frames=T,
+                batch_size=B,
+            )
+            denoised = torch.cat((denoised_uncond, denoised_cond), 0)
 
-    print(f"[TIMING] object conditioning: {t1 - t0:.2f}s")
-    print(f"[TIMING] reference conditioning: {t2 - t1:.2f}s")
-    print(f"[TIMING] setup: {t3 - t2:.2f}s")
-    print(f"[TIMING] sampling loop: {t4 - t3:.2f}s")
-    print(f"[TIMING] decode: {t5 - t4:.2f}s")
-    print(f"[TIMING] total: {t5 - t0:.2f}s")
+            denoised_mid = self.guider_mid(
+                denoised, sigma_hat, cfg_scale_mid, c2w=c2w, K=k, input_frame_mask=input_mask
+            )
 
-    return samples
+            denoised = self.guider(
+                denoised, sigma_hat, 2.0, c2w=c2w, K=k, input_frame_mask=input_mask
+            )
+
+            denoised[T:2 * T] = denoised_mid[T:2 * T]
+
+            d = to_d(x, sigma_hat, denoised)
+            dt = append_dims(next_sigma - sigma_hat, x.ndim)
+
+            x = x + dt * d
+
+        t4 = time.perf_counter()
+        samples = self.decode_latents_to_pil(x)
+        t5 = time.perf_counter()
+
+        print(f"[TIMING] object conditioning: {t1 - t0:.2f}s")
+        print(f"[TIMING] reference conditioning: {t2 - t1:.2f}s")
+        print(f"[TIMING] setup: {t3 - t2:.2f}s")
+        print(f"[TIMING] sampling loop: {t4 - t3:.2f}s")
+        print(f"[TIMING] decode: {t5 - t4:.2f}s")
+        print(f"[TIMING] total: {t5 - t0:.2f}s")
+
+        return samples
