@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Dict
 from fastapi import HTTPException
+from starlette.concurrency import run_in_threadpool
 
 app = FastAPI()
 GPU_LOCK = threading.Lock()
@@ -175,6 +176,67 @@ def clear_job_progress(job_id: str):
     with JOB_PROGRESS_LOCK:
         JOB_PROGRESS.pop(job_id, None)
 
+
+def run_multiview_job(
+    *,
+    job_id: str,
+    obj_path: Path,
+    ref_path: Path,
+    elevation: float,
+    distance: float,
+    fov: float,
+    steps: int,
+    max_frames: int,
+    camera_trajectory: str,
+):
+    set_job_progress(job_id, step=0, total_steps=max(1, steps - 1), status="running")
+
+    def on_progress(step: int, total_steps: int):
+        set_job_progress(job_id, step=step, total_steps=total_steps, status="running")
+
+    with GPU_LOCK, torch.inference_mode():
+        get_unload_z_pipe()()
+
+        _, pred_frames, obj_frames = get_mv_infer()(
+            input_image_path=str(obj_path),
+            reference_image_path=str(ref_path),
+            elevation=elevation,
+            distance=distance,
+            fov=fov,
+            num_inference_steps=steps,
+            camera_trajectory=camera_trajectory,
+            progress_callback=on_progress,
+        )
+
+        get_unload_mv_pipe()()
+
+    n = max(1, min(max_frames, len(pred_frames), len(obj_frames)))
+
+    saved_obj = []
+    saved_pred = []
+
+    for i, img in enumerate(obj_frames[:n]):
+        out = obj_path.parent / f"obj_{i:03d}.png"
+        img.save(out)
+        if out.exists() and out.stat().st_size > 0:
+            saved_obj.append(f"/outputs/{job_id}/obj_{i:03d}.png")
+
+    for i, img in enumerate(pred_frames[:n]):
+        out = obj_path.parent / f"pred_{i:03d}.png"
+        img.save(out)
+        if out.exists() and out.stat().st_size > 0:
+            saved_pred.append(f"/outputs/{job_id}/pred_{i:03d}.png")
+
+    cleanup_cuda()
+    set_job_progress(
+        job_id,
+        step=max(1, steps - 1),
+        total_steps=max(1, steps - 1),
+        status="completed",
+    )
+
+    return saved_obj, saved_pred
+
 @app.get("/api/multiview-progress/{job_id}")
 def get_multiview_progress(job_id: str):
     with JOB_PROGRESS_LOCK:
@@ -197,7 +259,6 @@ async def multiview_transfer(
     max_frames: int = Form(21),
     camera_trajectory: str = Form("orbit"),
 ):
-
     job_dir = OUTPUTS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -210,58 +271,22 @@ async def multiview_transfer(
     if camera_trajectory not in ALLOWED_CAMERA_TRAJECTORIES:
         camera_trajectory = "orbit"
 
-    set_job_progress(job_id, step=0, total_steps=steps, status="running")
-
-    def on_step(step_idx: int, total_steps: int):
-        # step_idx usually starts at 0, so expose 1-based progress to the UI
-        set_job_progress(
-            job_id,
-            step=min(step_idx + 1, total_steps),
-            total_steps=total_steps,
-            status="running",
-        )
-
+    # create entry immediately so early polls don't 404
     set_job_progress(job_id, step=0, total_steps=max(1, steps - 1), status="running")
 
-    def on_progress(step: int, total_steps: int):
-        set_job_progress(job_id, step=step, total_steps=total_steps, status="running")
-
     try:
-        with GPU_LOCK, torch.inference_mode():
-            get_unload_z_pipe()()
-
-            _, pred_frames, obj_frames = get_mv_infer()(
-                input_image_path=str(obj_path),
-                reference_image_path=str(ref_path),
-                elevation=elevation,
-                distance=distance,
-                fov=fov,
-                num_inference_steps=steps,
-                camera_trajectory=camera_trajectory,
-                progress_callback=on_progress,
-            )
-
-            get_unload_mv_pipe()()
-
-        n = max(1, min(max_frames, len(pred_frames), len(obj_frames)))
-
-        saved_obj = []
-        saved_pred = []
-
-        for i, img in enumerate(obj_frames[:n]):
-            out = job_dir / f"obj_{i:03d}.png"
-            img.save(out)
-            if out.exists() and out.stat().st_size > 0:
-                saved_obj.append(f"/outputs/{job_id}/obj_{i:03d}.png")
-
-        for i, img in enumerate(pred_frames[:n]):
-            out = job_dir / f"pred_{i:03d}.png"
-            img.save(out)
-            if out.exists() and out.stat().st_size > 0:
-                saved_pred.append(f"/outputs/{job_id}/pred_{i:03d}.png")
-
-        cleanup_cuda()
-        set_job_progress(job_id, step=max(1, steps - 1), total_steps=max(1, steps - 1), status="completed")
+        saved_obj, saved_pred = await run_in_threadpool(
+            run_multiview_job,
+            job_id=job_id,
+            obj_path=obj_path,
+            ref_path=ref_path,
+            elevation=elevation,
+            distance=distance,
+            fov=fov,
+            steps=steps,
+            max_frames=max_frames,
+            camera_trajectory=camera_trajectory,
+        )
 
         return {
             "job_id": job_id,
@@ -272,5 +297,10 @@ async def multiview_transfer(
         }
 
     except Exception:
-        set_job_progress(job_id, step=0, total_steps=max(1, steps - 1), status="failed")
+        set_job_progress(
+            job_id,
+            step=0,
+            total_steps=max(1, steps - 1),
+            status="failed",
+        )
         raise

@@ -676,7 +676,6 @@ export default function Home() {
       form.append("elevation", "10");
       form.append("distance", "2.0");
       form.append("fov", "0.7");
-      form.append("steps", "50");
       form.append("max_frames", "21");
       form.append("camera_trajectory", cameraTrajectory);
       form.append("job_id", jobId);
@@ -714,7 +713,7 @@ export default function Home() {
       setAutoSpin(true);
 
       setMvProgress01(1);
-      setMvStep(mvTotalSteps || 49);
+      setMvStep(Math.max(1, requestedSteps - 1));
     } catch (e) {
       console.error(e);
     } finally {
@@ -891,7 +890,14 @@ export default function Home() {
         const res = await fetch(`/api/multiview-progress/${mvJobId}`, {
           cache: "no-store",
         });
-        if (!res.ok) return;
+
+        if (res.status === 404) {
+          return;
+        }
+
+        if (!res.ok) {
+          throw new Error(`Progress poll failed: ${res.status}`);
+        }
 
         const data = (await res.json()) as MVProgressResponse;
         if (cancelled) return;
