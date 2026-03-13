@@ -37,8 +37,6 @@ B = 3
 # H = 256
 # W = 256
 
-torch.backends.cudnn.benchmark = True
-
 def load_pipeline(
     device="cuda",
     activate_layers=True,
@@ -56,6 +54,8 @@ def load_pipeline(
     image_encoder = CLIPConditioner().to(device)
     denoiser = DiscreteDenoiser(num_idx=1000, device=device)
     guider_mid = MultiviewCFG(3.0)
+    # guider_mid = MultiviewCFG(2.0)
+    # guider_mid = MultiviewCFG(1.2)
     guider = MultiviewCFG(1.2)
 
     pipeline = SEVAPipeline(
@@ -66,24 +66,15 @@ def load_pipeline(
         guider=guider,
         guider_mid=guider_mid,
     )
-
     if activate_layers:
         assert swapping_config is not None or resume_from is not None or manual_parameters is not None, (
             "Either swapping_config or resume_from or manual_parameters must be provided when activate_layers is True."
         )
         pipeline.activate_layers(
-            swapping_config=swapping_config,
-            resume_from=resume_from,
-            manual_parameters=manual_parameters,
+            swapping_config=swapping_config, resume_from=resume_from, manual_parameters=manual_parameters
         )
 
     pipeline.to(device)
-    pipeline.vae.to(device)
-    pipeline.image_encoder.to(device)
-
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
-
     return pipeline
 
 
@@ -227,8 +218,10 @@ class SEVAPipeline(nn.Module):
 
     @torch.no_grad()
     def encode_latents(self, samples, chunk_size=5):
-        with torch.amp.autocast("cuda", dtype=torch.float16):
+        self.vae.to("cuda")
+        with torch.amp.autocast("cuda", dtype=torch.float32):
             latents = self.vae.encode(samples, chunk_size)
+        self.vae.to("cpu")
         return latents
 
     def preprocess_videos(self, pil_videos: List[List[PIL.Image.Image]]) -> torch.Tensor:
@@ -255,8 +248,11 @@ class SEVAPipeline(nn.Module):
 
     @torch.no_grad()
     def decode_latents(self, latents, chunk_size=5):
-        with torch.amp.autocast("cuda", dtype=torch.float16):
+        with torch.amp.autocast("cuda", dtype=torch.float32):
+            self.vae.to("cuda")
             samples = self.vae.decode(latents, chunk_size)
+            self.vae.to("cpu")
+
         return samples
 
     def postprocess_videos(self, samples, reduce_first_frame=False, batch_size=B):
@@ -545,19 +541,9 @@ class SEVAPipeline(nn.Module):
             device=device,
         )
 
-        with torch.amp.autocast("cuda", dtype=torch.float16):
-            latents = torch.nn.functional.pad(
-                self.vae.encode(all_imgs[input_masks], 1),
-                (0, 0, 0, 0, 0, 1),
-                value=1.0,
-            )
+        latents = torch.nn.functional.pad(self.vae.encode(all_imgs[input_masks], 1), (0, 0, 0, 0, 0, 1), value=1.0)
 
-            c_crossattn = repeat(
-                self.image_encoder(all_imgs[input_masks]).mean(0),
-                "d -> n 1 d",
-                n=t,
-            ).clone()
-
+        c_crossattn = repeat(self.image_encoder(all_imgs[input_masks]).mean(0), "d -> n 1 d", n=t).clone()
         uc_crossattn = torch.zeros_like(
             c_crossattn,
             device=device,
@@ -578,6 +564,8 @@ class SEVAPipeline(nn.Module):
         cond = {"crossattn": c_crossattn, "replace": c_replace, "concat": c_concat, "dense_vector": c_dense_vec}
         uncond = {"crossattn": uc_crossattn, "replace": uc_replace, "concat": uc_concat, "dense_vector": uc_dense_vec}
 
+        self.vae.to("cpu")
+        self.image_encoder.to("cpu")
         return {"cond": cond, "uncond": uncond, "c2w": c2w, "curr_Ks": all_Ks, "input_masks": input_masks}
 
     @torch.no_grad()
@@ -597,10 +585,6 @@ class SEVAPipeline(nn.Module):
         main_stream="combined",
         progress_callback=None,
     ):
-        import time
-
-        t0 = time.perf_counter()
-
         self.guider_mid = MultiviewCFG(cfg_scale)
 
         object_conditioning = self.encode_conditioning(
@@ -612,7 +596,6 @@ class SEVAPipeline(nn.Module):
             bg_color=bg_color,
             zoom_factor=zoom_factor,
         )
-        t1 = time.perf_counter()
 
         reference_conditioning = self.encode_conditioning(
             reference_image_path,
@@ -623,18 +606,19 @@ class SEVAPipeline(nn.Module):
             bg_color=bg_color,
             zoom_factor=zoom_factor,
         )
-        t2 = time.perf_counter()
 
         cond, uncond, c2w, k, input_mask = self.get_combined_conditioning(
             object_conditioning, reference_conditioning, main_stream, device=self.unet.device
         )
 
         x, s_in, sigmas, num_sigmas = self.prepare_sampling_loop(num_inference_steps, self.unet.device)
+
         total_sampling_steps = max(1, num_sigmas - 1)
-        t3 = time.perf_counter()
+
+        total_sampling_steps = max(1, num_sigmas - 1)
 
         for i in tqdm.tqdm(range(total_sampling_steps), desc="Sampling", total=total_sampling_steps):
-            if progress_callback is not None and ((i + 1) % 2 == 0 or i == total_sampling_steps - 1):
+            if progress_callback is not None:
                 try:
                     progress_callback(i + 1, total_sampling_steps)
                 except Exception:
@@ -644,53 +628,27 @@ class SEVAPipeline(nn.Module):
             sigma = s_in * sigmas[i]
             next_sigma = s_in * sigmas[i + 1]
             sigma_hat = sigma * (gamma + 1.0) + 1e-6
-
-            eps = torch.randn_like(x[T:2 * T], device=self.unet.device)
+            eps = torch.randn_like(x[T : 2 * T], device=self.unet.device)
             eps = repeat(eps, "n ... -> (b n) ...", b=B)
             x = x + eps * append_dims(sigma_hat**2 - sigma**2, x.ndim) ** 0.5
 
-            denoised_cond = self.denoiser(
-                self.unet,
-                x,
-                sigma_hat,
-                cond,
-                num_frames=T,
-                batch_size=B,
-            )
-            denoised_uncond = self.denoiser(
-                self.unet,
-                x,
-                sigma_hat,
-                uncond,
-                num_frames=T,
-                batch_size=B,
-            )
+            denoised_cond = self.denoiser(self.unet, x, sigma_hat, cond, num_frames=T, batch_size=B)
+            denoised_uncond = self.denoiser(self.unet, x, sigma_hat, uncond, num_frames=T, batch_size=B)
             denoised = torch.cat((denoised_uncond, denoised_cond), 0)
 
             denoised_mid = self.guider_mid(
                 denoised, sigma_hat, cfg_scale_mid, c2w=c2w, K=k, input_frame_mask=input_mask
             )
 
-            denoised = self.guider(
-                denoised, sigma_hat, 2.0, c2w=c2w, K=k, input_frame_mask=input_mask
-            )
+            denoised = self.guider(denoised, sigma_hat, 2.0, c2w=c2w, K=k, input_frame_mask=input_mask)
 
-            denoised[T:2 * T] = denoised_mid[T:2 * T]
+            denoised[T : 2 * T] = denoised_mid[T : 2 * T]
 
             d = to_d(x, sigma_hat, denoised)
             dt = append_dims(next_sigma - sigma_hat, x.ndim)
 
             x = x + dt * d
 
-        t4 = time.perf_counter()
         samples = self.decode_latents_to_pil(x)
-        t5 = time.perf_counter()
-
-        print(f"[TIMING] object conditioning: {t1 - t0:.2f}s")
-        print(f"[TIMING] reference conditioning: {t2 - t1:.2f}s")
-        print(f"[TIMING] setup: {t3 - t2:.2f}s")
-        print(f"[TIMING] sampling loop: {t4 - t3:.2f}s")
-        print(f"[TIMING] decode: {t5 - t4:.2f}s")
-        print(f"[TIMING] total: {t5 - t0:.2f}s")
 
         return samples
