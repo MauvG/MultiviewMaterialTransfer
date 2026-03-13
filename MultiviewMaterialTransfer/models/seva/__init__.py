@@ -75,6 +75,20 @@ def load_pipeline(
         )
 
     pipeline.to(device)
+    pipeline.vae.to(device)
+    pipeline.image_encoder.to(device)
+
+    if device == "cuda":
+        try:
+            pipeline.unet = torch.compile(
+                pipeline.unet,
+                mode="max-autotune",
+                fullgraph=False,
+            )
+            print("Compiled UNet with torch.compile")
+        except Exception as e:
+            print(f"torch.compile skipped: {e}")
+
     return pipeline
 
 
@@ -218,10 +232,8 @@ class SEVAPipeline(nn.Module):
 
     @torch.no_grad()
     def encode_latents(self, samples, chunk_size=5):
-        self.vae.to("cuda")
-        with torch.amp.autocast("cuda", dtype=torch.float32):
+        with torch.amp.autocast("cuda", dtype=torch.float16):
             latents = self.vae.encode(samples, chunk_size)
-        self.vae.to("cpu")
         return latents
 
     def preprocess_videos(self, pil_videos: List[List[PIL.Image.Image]]) -> torch.Tensor:
@@ -248,11 +260,8 @@ class SEVAPipeline(nn.Module):
 
     @torch.no_grad()
     def decode_latents(self, latents, chunk_size=5):
-        with torch.amp.autocast("cuda", dtype=torch.float32):
-            self.vae.to("cuda")
+        with torch.amp.autocast("cuda", dtype=torch.float16):
             samples = self.vae.decode(latents, chunk_size)
-            self.vae.to("cpu")
-
         return samples
 
     def postprocess_videos(self, samples, reduce_first_frame=False, batch_size=B):
@@ -564,8 +573,6 @@ class SEVAPipeline(nn.Module):
         cond = {"crossattn": c_crossattn, "replace": c_replace, "concat": c_concat, "dense_vector": c_dense_vec}
         uncond = {"crossattn": uc_crossattn, "replace": uc_replace, "concat": uc_concat, "dense_vector": uc_dense_vec}
 
-        self.vae.to("cpu")
-        self.image_encoder.to("cpu")
         return {"cond": cond, "uncond": uncond, "c2w": c2w, "curr_Ks": all_Ks, "input_masks": input_masks}
 
     @torch.no_grad()
