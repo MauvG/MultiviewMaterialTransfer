@@ -371,6 +371,19 @@ export default function Home() {
     quat: Quat;
   } | null>(null);
 
+  type MVProgressResponse = {
+    job_id: string;
+    status: "running" | "completed" | "failed";
+    step: number;
+    total_steps: number;
+    progress: number;
+  };
+
+  const [mvJobId, setMvJobId] = useState<string | null>(null);
+  const [mvStep, setMvStep] = useState(0);
+  const [mvTotalSteps, setMvTotalSteps] = useState(0);
+  const [mvProgress01, setMvProgress01] = useState(0);
+
   const [activeOrbitAxis, setActiveOrbitAxis] = useState<OrbitAxis | null>(
     null,
   );
@@ -634,6 +647,12 @@ export default function Home() {
     if (!objectImage) return;
 
     setRunning(true);
+    setMvStep(0);
+    setMvTotalSteps(49);
+    setMvProgress01(0);
+
+    const jobId = crypto.randomUUID().replace(/-/g, "");
+    setMvJobId(jobId);
 
     try {
       const objBlob = await fetch(objectImage).then((r) => r.blob());
@@ -651,12 +670,16 @@ export default function Home() {
         new File([objBlob], "object.png", { type: "image/png" }),
       );
 
+      const requestedSteps = 50;
+      setMvTotalSteps(Math.max(1, requestedSteps - 1));
+      form.append("steps", String(requestedSteps));
       form.append("elevation", "10");
       form.append("distance", "2.0");
       form.append("fov", "0.7");
       form.append("steps", "50");
       form.append("max_frames", "21");
       form.append("camera_trajectory", cameraTrajectory);
+      form.append("job_id", jobId);
 
       const res = await fetch("/api/multiview-transfer", {
         method: "POST",
@@ -688,11 +711,15 @@ export default function Home() {
         readyPredFrames.length ? "pred" : readyObjFrames.length ? "obj" : null,
       );
       setYaw01(0);
-      setAutoSpin(false);
+      setAutoSpin(true);
+
+      setMvProgress01(1);
+      setMvStep(mvTotalSteps || 49);
     } catch (e) {
       console.error(e);
     } finally {
       setRunning(false);
+      setMvJobId(null);
     }
   };
 
@@ -853,6 +880,38 @@ export default function Home() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!running || !mvJobId) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/multiview-progress/${mvJobId}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+
+        const data = (await res.json()) as MVProgressResponse;
+        if (cancelled) return;
+
+        setMvStep(data.step ?? 0);
+        setMvTotalSteps(data.total_steps ?? 0);
+        setMvProgress01(data.progress ?? 0);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    tick();
+    const id = window.setInterval(tick, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [running, mvJobId]);
 
   const refScrollMax = (() => {
     const el = refStripRef.current;
@@ -1112,19 +1171,35 @@ export default function Home() {
                 onWheelCapture={(e) => e.stopPropagation()}
               >
                 <div className="rounded-full border border-[color:var(--border)] bg-[var(--surface)] backdrop-blur px-3 py-2">
-                  <input
-                    disabled={!hasFrames}
-                    type="range"
-                    min={0}
-                    max={Math.max(0, frameCount - 1)}
-                    step={1}
-                    value={frameIndex}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setYaw01(frameCount <= 1 ? 0 : v / (frameCount - 1));
-                    }}
-                    className="w-full accent-[var(--accent)] disabled:opacity-40"
-                  />
+                  {running ? (
+                    <div className="flex items-center gap-3">
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--thumb-bg)]">
+                        <div
+                          className="h-full rounded-full bg-[var(--primary-bg)] transition-[width] duration-150"
+                          style={{
+                            width: `${Math.round(mvProgress01 * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="w-24 text-right text-xs tabular-nums text-[color:var(--muted2)]">
+                        {mvStep}/{mvTotalSteps || 0}
+                      </div>
+                    </div>
+                  ) : (
+                    <input
+                      disabled={!hasFrames}
+                      type="range"
+                      min={0}
+                      max={Math.max(0, frameCount - 1)}
+                      step={1}
+                      value={frameIndex}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setYaw01(frameCount <= 1 ? 0 : v / (frameCount - 1));
+                      }}
+                      className="w-full accent-[var(--accent)] disabled:opacity-40"
+                    />
+                  )}
                 </div>
               </div>
             </div>

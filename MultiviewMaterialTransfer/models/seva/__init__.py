@@ -583,6 +583,7 @@ class SEVAPipeline(nn.Module):
         cfg_scale=3.0,
         cfg_scale_mid=3.0,
         main_stream="combined",
+        progress_callback=None,
     ):
         self.guider_mid = MultiviewCFG(cfg_scale)
 
@@ -612,7 +613,17 @@ class SEVAPipeline(nn.Module):
 
         x, s_in, sigmas, num_sigmas = self.prepare_sampling_loop(num_inference_steps, self.unet.device)
 
-        for i in tqdm.tqdm(range(num_sigmas - 1), desc="Sampling", total=num_sigmas - 1):
+        total_sampling_steps = max(1, num_sigmas - 1)
+
+        total_sampling_steps = max(1, num_sigmas - 1)
+
+        for i in tqdm.tqdm(range(total_sampling_steps), desc="Sampling", total=total_sampling_steps):
+            if progress_callback is not None:
+                try:
+                    progress_callback(i + 1, total_sampling_steps)
+                except Exception:
+                    pass
+
             gamma = 0.0
             sigma = s_in * sigmas[i]
             next_sigma = s_in * sigmas[i + 1]

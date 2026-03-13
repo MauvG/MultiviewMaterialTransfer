@@ -61,6 +61,7 @@ def infer(
     fov: float,
     num_inference_steps: int,
     camera_trajectory: str = "orbit",
+    progress_callback=None,
 ):
     pipe = get_pipeline()
 
@@ -81,6 +82,7 @@ def infer(
                 fov=fov,
                 num_inference_steps=num_inference_steps,
                 camera_trajectory=camera_trajectory,
+                progress_callback=progress_callback,
             )
 
     frames = [f[1:] for f in samples]
